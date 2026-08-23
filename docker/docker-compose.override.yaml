@@ -1,0 +1,14 @@
+services:
+  nginx:
+    # Fester Name, damit NPM ein stabiles Ziel hat
+    container_name: dify-nginx
+    networks:
+      default:
+      proxy:
+    # Keine Ports mehr nach aussen - NPM erreicht den Container ueber das
+    # proxy-Netz. Braucht Docker Compose v2.24+ (fordert Dify ohnehin).
+    ports: !override []
+
+networks:
+  proxy:
+    external: true
