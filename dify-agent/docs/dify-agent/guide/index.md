@@ -2,7 +2,10 @@
 
 This guide describes how to run the MVP Dify Agent API server. The server is
 implemented in `dify-agent/src/dify_agent/server/app.py` and uses Redis for run
-records and per-run event streams only.
+records and per-run event streams. Optional E2B usage collection is triggered by
+the API's existing Celery Beat schedule through a separate one-shot endpoint.
+It adds no operation logging, polling loop, leader election or accounting context
+to business runtime execution.
 
 ## Default local startup
 
@@ -29,12 +32,22 @@ run.
 `ServerSettings` loads environment variables with the `DIFY_AGENT_` prefix. It
 also reads `.env` and `dify-agent/.env` when present.
 
+OpenShell-specific settings are listed in the
+[OpenShell configuration reference](openshell.md#configuration).
+
+Independent E2B execution accounting, activation and rollout checks are described
+in [E2B runtime metering](runtime-metering.md).
+
 | Environment variable | Default | Description |
 | --- | --- | --- |
 | `DIFY_AGENT_REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL. |
 | `DIFY_AGENT_REDIS_PREFIX` | `dify-agent` | Prefix for Redis record and event keys. |
 | `DIFY_AGENT_SHUTDOWN_GRACE_SECONDS` | `30` | Seconds to wait for active local runs during graceful shutdown before cancellation. |
-| `DIFY_AGENT_RUN_RETENTION_SECONDS` | `259200` | Seconds to retain Redis run records and per-run event streams; defaults to 3 days. |
+| `DIFY_AGENT_RUN_RETENTION_SECONDS` | `7200` | Seconds to retain Redis run records and per-run event streams after their last write; defaults to 2 hours. |
+| `DIFY_AGENT_RUN_EVENT_STREAM_MAX_LENGTH` | `5000` | Approximate target maximum for replayable events retained in each per-run Redis Stream. |
+| `DIFY_AGENT_STREAM_TEXT_DELTA_COALESCING_ENABLED` | `true` | Set `false` to publish each text delta without coalescing. |
+| `DIFY_AGENT_STREAM_TEXT_DELTA_FLUSH_INTERVAL_MS` | `100` | Soft debounce interval for compatible text deltas. Already-ready source events may continue to merge after this interval; a waiting source triggers the timed flush. Must be greater than zero; use `DIFY_AGENT_STREAM_TEXT_DELTA_COALESCING_ENABLED=false` to disable coalescing. |
+| `DIFY_AGENT_STREAM_TEXT_DELTA_MAX_CHARS` | `4096` | Character threshold that flushes a buffered text-delta event immediately. |
 | `DIFY_AGENT_RUN_TIMEOUT_SECONDS` | `3600` | Wall-clock deadline in seconds for the Pydantic AI `agent.run(...)` model/tool loop. Deadline failures use `agent_run_limit_exceeded`. Its default intentionally matches `DIFY_AGENT_E2B_ACTIVE_TIMEOUT_SECONDS`, but the settings are independently configurable. |
 | `DIFY_AGENT_BINDING_FILE_DOWNLOAD_COMMAND_TIMEOUT_SECONDS` | `210` | Shell command deadline for running the sandbox `dify-agent file upload --no-download-link` conversion. Keep it above the CLI's 180-second upload deadline. |
 | `DIFY_AGENT_API_TOKEN` | empty | Optional Bearer token required by private run, Execution Binding, Home Snapshot, and Binding file control-plane routes. Must match Dify API `AGENT_BACKEND_API_TOKEN`. |
@@ -42,7 +55,7 @@ also reads `.env` and `dify-agent/.env` when present.
 | `DIFY_AGENT_PLUGIN_DAEMON_API_KEY` | empty | API key sent to the Dify plugin daemon. |
 | `DIFY_AGENT_INNER_API_URL` | `http://localhost:5001` | Dify API service root used when dify-agent calls `/inner/api/...` endpoints. |
 | `DIFY_AGENT_INNER_API_KEY` | empty | API key sent to Dify API inner plugin endpoints. Set this to Dify API `INNER_API_KEY_FOR_PLUGIN` (Docker: `PLUGIN_DIFY_INNER_API_KEY`). |
-| `DIFY_AGENT_RUNTIME_BACKEND` | `local` | Selects one coherent `local`, `enterprise`, or `e2b` Home Snapshot + Execution Binding backend profile. |
+| `DIFY_AGENT_RUNTIME_BACKEND` | `local` | Selects one coherent `local`, `enterprise`, `e2b`, or `openshell` Home Snapshot + Execution Binding backend profile. |
 | `DIFY_AGENT_LOCAL_SANDBOX_ENDPOINT` | empty | Local shellctl data-plane URL. With the default Local selection, leaving it empty disables `dify.runtime` and resource endpoints. |
 | `DIFY_AGENT_LOCAL_SANDBOX_AUTH_TOKEN` | empty | Optional bearer token sent to Local shellctl. |
 | `DIFY_AGENT_LOCAL_SANDBOX_MATERIALIZED_HOME_ROOT` | `/home/dify` | Root directory, on the Local shellctl filesystem, for per-Binding materialized Homes. |
@@ -68,6 +81,43 @@ also reads `.env` and `dify-agent/.env` when present.
 | `DIFY_AGENT_OUTBOUND_HTTP_MAX_CONNECTIONS` | `100` | Maximum total shared outbound HTTP connections. |
 | `DIFY_AGENT_OUTBOUND_HTTP_MAX_KEEPALIVE_CONNECTIONS` | `20` | Maximum idle shared outbound HTTP connections. |
 | `DIFY_AGENT_OUTBOUND_HTTP_KEEPALIVE_EXPIRY` | `30` | Idle keep-alive expiry in seconds. |
+| `DIFY_AGENT_TRAJECTORY_ENABLED` | `false` | Opt-in switch for the separate Agent trajectory export pipeline. |
+| `DIFY_AGENT_TRAJECTORY_OTLP_TRACES_ENDPOINT` | empty | Full HTTP(S) OTLP traces endpoint required when trajectory export is enabled. |
+| `DIFY_AGENT_TRAJECTORY_OTLP_HEADERS` | `{}` | JSON object of request headers sent with Agent OTLP trace exports. |
+| `DIFY_AGENT_TRAJECTORY_SERVICE_NAME` | `dify-agent-trajectory` | Resource service name attached to Agent trajectory spans. |
+| `DIFY_AGENT_TRAJECTORY_INCLUDE_CONTENT` | `false` | Include message and tool content in Agent trajectory spans. |
+| `DIFY_AGENT_TRAJECTORY_TRACE_CONTEXT_MODE` | `isolated` | `isolated` starts independent platform/Agent traces; `shared` preserves cross-instance parent context. Requires process restart to change. |
+| `DIFY_AGENT_TRAJECTORY_MAX_QUEUE_SIZE` | `2048` | Maximum number of spans queued for Agent trace export; must be positive. |
+| `DIFY_AGENT_TRAJECTORY_MAX_EXPORT_BATCH_SIZE` | `512` | Maximum spans per export batch; must be positive and no greater than the queue size. |
+| `DIFY_AGENT_TRAJECTORY_SCHEDULE_DELAY_MS` | `5000` | Delay between scheduled Agent span exports, in milliseconds; must be positive. |
+| `DIFY_AGENT_TRAJECTORY_EXPORT_TIMEOUT_MS` | `5000` | Batch processor export timeout setting, in milliseconds; must be positive. Does not change the OTLP HTTP exporter request timeout. |
+
+Platform observability uses the process-level Logfire instance and standard
+`OTEL_*` / `LOGFIRE_*` configuration. Agent observability uses a separate local
+Logfire instance and is disabled by default. Set `DIFY_AGENT_TRAJECTORY_ENABLED=true`
+and a full `DIFY_AGENT_TRAJECTORY_OTLP_TRACES_ENDPOINT` to opt in;
+`DIFY_AGENT_TRAJECTORY_OTLP_HEADERS` is a JSON object of request headers. Agent
+traces do not inherit platform endpoints, credentials, sampling, or console
+export. Message/tool content requires the separate
+`DIFY_AGENT_TRAJECTORY_INCLUDE_CONTENT` opt-in. Platform FastAPI parameter/error
+payloads, HTTPX bodies/headers and Redis statements are not captured by these
+instrumentations. The Agent instance is created at service startup and shut down
+after active runs finish. These are deployment-level settings, not yet
+per-tenant authorization or routing; a shared backend does not provide storage
+isolation.
+
+With `DIFY_AGENT_TRAJECTORY_TRACE_CONTEXT_MODE=isolated` (the default), Agent
+run spans start independent traces instead of inheriting platform request
+parents. Platform HTTPX/Redis instrumentation also detaches local Agent
+parents while preserving platform-only and incoming distributed trace
+relationships. In `shared` mode both pipelines retain cross-instance parent
+context and the Agent sampler respects the parent sampling decision. Use
+`shared` only when both pipelines export to the same queryable backend space;
+otherwise missing-root spans can recur. Service names do not select the mode.
+The two SDK instances, exporters, enable switch, and content opt-in remain
+separate. The mode is fixed at process initialization and requires a restart
+to change. No extra shared root span is added; incomplete traces may still
+appear temporarily while a run or export is in progress.
 
 Example `.env`:
 
@@ -75,7 +125,10 @@ Example `.env`:
 DIFY_AGENT_REDIS_URL=redis://localhost:6379/0
 DIFY_AGENT_REDIS_PREFIX=dify-agent-dev
 DIFY_AGENT_SHUTDOWN_GRACE_SECONDS=30
-DIFY_AGENT_RUN_RETENTION_SECONDS=259200
+DIFY_AGENT_RUN_RETENTION_SECONDS=7200
+DIFY_AGENT_RUN_EVENT_STREAM_MAX_LENGTH=5000
+DIFY_AGENT_STREAM_TEXT_DELTA_FLUSH_INTERVAL_MS=100
+DIFY_AGENT_STREAM_TEXT_DELTA_MAX_CHARS=4096
 DIFY_AGENT_RUN_TIMEOUT_SECONDS=3600
 DIFY_AGENT_API_TOKEN=replace-with-agent-backend-token
 DIFY_AGENT_PLUGIN_DAEMON_URL=http://localhost:5002
@@ -138,7 +191,15 @@ and lifecycle contract.
 
 Run records and event streams use the same retention. Status writes refresh the
 record TTL, and event writes refresh both the stream TTL and the corresponding
-record TTL so active runs that keep producing events remain observable.
+record TTL so active runs that keep producing events remain observable. Text
+deltas for the same response part and provider metadata are coalesced within a
+soft debounce/size window before being published. The debounce timer flushes
+when reading the next source event would block; already-ready events may keep
+merging until the character threshold or a non-compatible event is reached.
+Every Redis Stream write also applies the configured approximate maximum length. A reconnect cursor older than the
+retained window resumes from the oldest remaining event, so callers must treat
+the terminal snapshot and application-owned history as authoritative rather
+than relying on the Agent event stream as long-term history.
 
 ## Validate the E2B Compose deployment
 
@@ -222,15 +283,23 @@ provider `RuntimeError` observed first becomes a tool observation. In contrast,
 run-deadline cancellation propagates through the Shell boundary; only the Dify
 Agent run deadline owns the terminal `agent_run_limit_exceeded` failure.
 
+## OpenShell backend
+
+See the [OpenShell Runtime Backend guide](openshell.md) for its configuration
+reference, runtime image build instructions, gateway and shared-volume setup,
+and deployment validation.
+
 ## Run runtime-backend integration contracts
 
 Run the disposable Local contract from the `dify-agent` directory. The script
 starts one local-sandbox container on an unused port and removes that exact
-container on exit:
+container on exit. It intentionally has no image fallback: provide a Local
+Sandbox image built from the same commit as the code under test so an older
+shellctl implementation cannot make the lifecycle contract pass incorrectly:
 
 ```bash
 cd dify-agent
-DIFY_AGENT_TEST_LOCAL_SANDBOX_IMAGE=langgenius/dify-agent-local-sandbox:1.16.0 \
+DIFY_AGENT_TEST_LOCAL_SANDBOX_IMAGE=<same-commit-local-sandbox-image> \
   tests/integration/dify_agent/runtime_backend/run_local_integration.sh
 ```
 
@@ -256,9 +325,11 @@ DIFY_AGENT_TEST_E2B_TEMPLATE=difys-default-team/dify-agent-local-sandbox \
   -k e2b -q -rs
 ```
 
+For OpenShell, see [Run the OpenShell integration contract](openshell.md#run-the-openshell-integration-contract).
+
 The Local auth token is optional when shellctl has authentication disabled.
 The E2B contract uses the one-hour `E2B_MAX_ACTIVE_TIMEOUT_SECONDS` RuntimeLease
-limit. This is continuous active test time, not a post-test retention TTL. Both
+limit. This is continuous active test time, not a post-test retention TTL. All
 contracts create unique resources and perform explicit cleanup in `finally`
 blocks.
 
@@ -341,6 +412,49 @@ whose Agenton layers provide user input. With the MVP provider set, use
 `config.user` can be a string or a list of strings. Empty or whitespace-only
 effective prompts are rejected during create-run validation before the run is
 persisted or scheduled.
+
+Agent App callers can use the `dify.user_prompt` layer to send text and images
+in the same model turn. Each image must provide exactly one transport: an
+HTTP(S) `url` or unprefixed Base64 data in `base64_data`. The image is passed as
+structured multimodal content; it is not interpolated into `config.text`.
+
+```json
+{
+  "name": "agent_app_user_prompt",
+  "type": "dify.user_prompt",
+  "config": {
+    "text": "Describe this image.",
+    "files": [
+      {
+        "delivery": "multimodal",
+        "type": "image",
+        "filename": "earth.png",
+        "mime_type": "image/png",
+        "format": "png",
+        "url": "https://files.example.com/earth.png",
+        "base64_data": null,
+        "detail": "high"
+      }
+    ]
+  }
+}
+```
+
+All attachments use `config.files`. The `delivery` field selects how an attachment
+is presented, independently of its file `type` (`image`, `document`, `audio`,
+`video`, or `custom`):
+
+- `delivery: "multimodal"` currently supports `type: "image"` only. Dify API
+  chooses URL or Base64 transport according to `MULTIMODAL_SEND_FORMAT`.
+- `delivery: "download"` preserves the original file `type`, including `image`
+  when the selected model has no Vision feature. It contains either
+  `transfer_method: "remote_url"` with `url`, or a `local_file`, `tool_file`, or
+  `datasource_file` transfer method with a canonical `reference`.
+
+The layer appends sandbox file-download instructions for download attachments
+and adds multimodal attachments as structured model content. Callers keep
+`config.text` as the original user text. Omitting `config.files` is equivalent
+to an empty list.
 
 The optional Pydantic AI history layer uses the reserved name `history` and
 persists captured messages in session snapshots for later resume. Resume from a

@@ -7,14 +7,17 @@ policy is validated:
 - model runs: enter a fresh ``CompositorRun`` (or resume one from a snapshot),
   pass the current Dify system prompts as run-level instructions, run
   pydantic-ai with either the current ``run.user_prompts`` or deferred external
-  tool results, emit raw stream events with agent-message delta annotations, apply
-  request-level ``on_exit`` signals, and publish a terminal success or failure event;
+  tool results, emit stream events with bounded text-delta coalescing and
+  agent-message annotations, apply request-level ``on_exit`` signals, and publish
+  a terminal success or failure event;
 The Pydantic AI model is resolved from the active Agenton layer named by
 ``DIFY_AGENT_MODEL_LAYER_ID``. An optional history layer contributes stored
 message history only through session state. Once pydantic-ai binds and builds
 messages in the run capture, every terminal outcome replaces that state with the
 captured messages after transient instructions are cleared; a failure or
 cancellation before the capture contains messages preserves the restored state.
+An interrupted run also records that its trailing response was cut short, so tool
+calls it never executed do not block the next user prompt.
 This preserves compaction rewrites and interrupted partial messages without
 saving current system prompts. An optional structured output layer named by
 ``DIFY_AGENT_OUTPUT_LAYER_ID`` is read after entry and resolved into an output
@@ -67,6 +70,11 @@ from dify_agent.runtime.agenton_validation import is_agenton_enter_validation_ru
 from dify_agent.runtime.compositor_factory import build_pydantic_ai_compositor, create_default_layer_providers
 from dify_agent.runtime.compaction import build_compaction_capability
 from dify_agent.runtime_backend import BindingLostError
+from dify_agent.runtime.event_coalescer import (
+    DEFAULT_TEXT_DELTA_FLUSH_INTERVAL_SECONDS,
+    DEFAULT_TEXT_DELTA_MAX_CHARS,
+    coalesce_agent_stream_events,
+)
 from dify_agent.runtime.event_sink import (
     RunEventSink,
     emit_pydantic_ai_event,
@@ -74,6 +82,7 @@ from dify_agent.runtime.event_sink import (
     emit_run_started,
     emit_run_succeeded,
 )
+from dify_agent.runtime.observability import AgentObservability
 from dify_agent.runtime.history import (
     get_history_layer,
     replace_run_history,
@@ -187,6 +196,10 @@ class AgentRunRunner:
     dify_api_http_client: httpx.AsyncClient
     is_cancelled: Callable[[], bool]
     run_timeout_seconds: float
+    stream_text_delta_coalescing_enabled: bool
+    stream_text_delta_flush_interval_seconds: float
+    stream_text_delta_max_chars: int
+    agent_observability: AgentObservability | None
     _terminal_session_snapshot: CompositorSessionSnapshot | None
     _terminal_usage: AgentRunUsage | None
 
@@ -201,7 +214,15 @@ class AgentRunRunner:
         layer_providers: tuple[LayerProviderInput, ...] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         run_timeout_seconds: float = DEFAULT_AGENT_RUN_TIMEOUT_SECONDS,
+        stream_text_delta_coalescing_enabled: bool = True,
+        stream_text_delta_flush_interval_seconds: float = DEFAULT_TEXT_DELTA_FLUSH_INTERVAL_SECONDS,
+        stream_text_delta_max_chars: int = DEFAULT_TEXT_DELTA_MAX_CHARS,
+        agent_observability: AgentObservability | None = None,
     ) -> None:
+        if stream_text_delta_flush_interval_seconds <= 0:
+            raise ValueError("stream_text_delta_flush_interval_seconds must be positive")
+        if stream_text_delta_max_chars <= 0:
+            raise ValueError("stream_text_delta_max_chars must be positive")
         self.sink = sink
         self.request = request
         self.run_id = run_id
@@ -210,6 +231,10 @@ class AgentRunRunner:
         self.layer_providers = layer_providers if layer_providers is not None else create_default_layer_providers()
         self.is_cancelled = is_cancelled or (lambda: False)
         self.run_timeout_seconds = run_timeout_seconds
+        self.stream_text_delta_coalescing_enabled = stream_text_delta_coalescing_enabled
+        self.stream_text_delta_flush_interval_seconds = stream_text_delta_flush_interval_seconds
+        self.stream_text_delta_max_chars = stream_text_delta_max_chars
+        self.agent_observability = agent_observability
         self._terminal_session_snapshot = None
         self._terminal_usage = None
 
@@ -320,7 +345,13 @@ class AgentRunRunner:
                     raise AgentRunValidationError(EMPTY_USER_PROMPTS_ERROR)
 
                 async def handle_events(_ctx: object, events: AsyncIterable[AgentStreamEvent]) -> None:
-                    async for event in events:
+                    published_events = coalesce_agent_stream_events(
+                        events,
+                        enabled=self.stream_text_delta_coalescing_enabled,
+                        flush_interval_seconds=self.stream_text_delta_flush_interval_seconds,
+                        max_chars=self.stream_text_delta_max_chars,
+                    )
+                    async for event in published_events:
                         if self.is_cancelled():
                             raise asyncio.CancelledError
                         text_delta = _extract_agent_message_delta(event)
@@ -363,9 +394,18 @@ class AgentRunRunner:
                     tools=tools,
                     output_type=_resolve_agent_output_type(output_contract.output_type, ask_human_layer is not None),
                 )
+                if self.agent_observability is not None:
+                    # The model layer's required execution-context dependency is the
+                    # run's only carrier of Dify identity, and its node name is
+                    # caller-chosen, so read it through the typed dependency.
+                    self.agent_observability.instrument(
+                        agent,
+                        execution_context=llm_layer.deps.execution_context.config,
+                    )
                 run_timeout = asyncio.timeout(self.run_timeout_seconds)
                 try:
                     with capture_run_messages() as captured_messages:
+                        agent_run_finished = False
                         try:
                             async with run_timeout:
                                 result = await agent.run(
@@ -377,9 +417,12 @@ class AgentRunRunner:
                                     capabilities=[compaction] if compaction is not None else None,
                                     usage_limits=UsageLimits(request_limit=_MAX_AGENT_STEPS_PER_RUN),
                                 )
+                            agent_run_finished = True
                         finally:
                             if captured_messages:
-                                replace_run_history(history_layer, captured_messages)
+                                replace_run_history(
+                                    history_layer, captured_messages, interrupted=not agent_run_finished
+                                )
                 except TimeoutError as exc:
                     if not run_timeout.expired():
                         raise

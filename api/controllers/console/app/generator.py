@@ -401,6 +401,7 @@ class InstructionGenerateApi(Resource):
                     instruction=req_data.instruction,
                     model_config=req_data.model_config_data,
                     ideal_output=req_data.ideal_output,
+                    session=session,
                 )
             if req_data.node_id != "" and req_data.current != "":  # For workflow node
                 return LLMGenerator.instruction_modify_workflow(
@@ -412,6 +413,7 @@ class InstructionGenerateApi(Resource):
                     model_config=req_data.model_config_data,
                     ideal_output=req_data.ideal_output,
                     workflow_service=WorkflowService(),
+                    session=session,
                 )
             return {"error": "incompatible parameters"}, 400
         except ProviderTokenNotInitError as ex:
@@ -600,7 +602,7 @@ class WorkflowGenerateStreamApi(Resource):
         if guard is not None:
             return guard
 
-        def generate() -> Generator[str, None, None]:
+        def generate() -> Generator[str]:
             try:
                 for event_name, payload in WorkflowGeneratorService.generate_workflow_graph_stream(
                     tenant_id=current_tenant_id,

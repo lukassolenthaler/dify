@@ -10,11 +10,10 @@ import {
   ComboboxItemText,
   ComboboxList,
   ComboboxSeparator,
-  useComboboxFilteredItems,
 } from '@langgenius/dify-ui/combobox'
 import { IconButton } from '@langgenius/dify-ui/icon-button'
 import { useAtomValue } from 'jotai'
-import { Fragment, useRef } from 'react'
+import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { workspacePermissionKeysAtom } from '@/context/permission-state'
 import { hasPermission } from '@/utils/permission'
@@ -28,22 +27,25 @@ type TagSearchContentProps = {
   onOpenTagManagement?: () => void
   onClose?: () => void
   canBindOrUnbindTags?: boolean
+  showTagManagement?: boolean
 }
 
-export const TagSearchContent = ({
+type TagSearchContentViewProps = TagSearchContentProps & {
+  canManageTags: boolean
+}
+
+export const TagSearchContentView = ({
   type,
   inputValue,
   onInputValueChange,
   onOpenTagManagement,
   onClose,
   canBindOrUnbindTags = false,
-}: TagSearchContentProps) => {
-  const { t } = useTranslation()
+  showTagManagement = true,
+  canManageTags,
+}: TagSearchContentViewProps) => {
+  const { t } = useTranslation(['common'])
   const inputRef = useRef<HTMLInputElement>(null)
-  const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
-  const canManageTags = hasPermission(workspacePermissionKeys, getTagManagePermissionKey(type))
-  const filteredItems = useComboboxFilteredItems<TagComboboxItem>()
-  const realItemCount = filteredItems.filter((tag) => !isCreateTagOption(tag)).length
   const placeholder = t(($) => $['tag.selectorPlaceholder'], { ns: 'common' }) || ''
 
   const handleClearInput = () => {
@@ -52,7 +54,7 @@ export const TagSearchContent = ({
   }
 
   return (
-    <div className="relative w-full">
+    <>
       <div className="p-2 pb-1">
         <ComboboxInputGroup className="border-divider-subtle bg-components-input-bg-normal">
           <span
@@ -83,28 +85,25 @@ export const TagSearchContent = ({
         {(tag) => {
           if (isCreateTagOption(tag) && canManageTags) {
             return (
-              <Fragment key={tag.id}>
-                <ComboboxItem value={tag}>
-                  <ComboboxItemText className="flex items-center gap-x-1 px-0">
-                    <span
-                      aria-hidden="true"
-                      className="i-ri-add-line size-4 shrink-0 text-text-tertiary"
-                    />
-                    <span className="min-w-0 grow truncate px-1 system-md-regular text-text-secondary">
-                      {`${t(($) => $['tag.create'], { ns: 'common' })} `}
-                      <span className="system-md-medium">{`'${tag.name}'`}</span>
-                    </span>
-                  </ComboboxItemText>
-                </ComboboxItem>
-                {realItemCount > 0 && <ComboboxSeparator />}
-              </Fragment>
+              <ComboboxItem<string> key={tag.id} value={tag.id}>
+                <ComboboxItemText className="flex items-center gap-x-1 px-0">
+                  <span
+                    aria-hidden="true"
+                    className="i-ri-add-line size-4 shrink-0 text-text-tertiary"
+                  />
+                  <span className="min-w-0 grow truncate px-1 system-md-regular text-text-secondary">
+                    {`${t(($) => $['tag.create'], { ns: 'common' })} `}
+                    <span className="system-md-medium">{`'${tag.name}'`}</span>
+                  </span>
+                </ComboboxItemText>
+              </ComboboxItem>
             )
           }
 
           return (
-            <ComboboxItem
+            <ComboboxItem<string>
               key={tag.id}
-              value={tag}
+              value={tag.id}
               disabled={!canBindOrUnbindTags && !canManageTags}
             >
               <ComboboxItemText title={tag.name}>{tag.name}</ComboboxItemText>
@@ -124,7 +123,7 @@ export const TagSearchContent = ({
           </div>
         </div>
       </ComboboxEmpty>
-      {canManageTags && (
+      {canManageTags && showTagManagement && (
         <>
           <ComboboxSeparator />
           <div className="p-1">
@@ -148,6 +147,16 @@ export const TagSearchContent = ({
           </div>
         </>
       )}
-    </div>
+    </>
   )
+}
+
+export const TagSearchContent = (props: TagSearchContentProps) => {
+  const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
+  const canManageTags = hasPermission(
+    workspacePermissionKeys,
+    getTagManagePermissionKey(props.type),
+  )
+
+  return <TagSearchContentView {...props} canManageTags={canManageTags} />
 }

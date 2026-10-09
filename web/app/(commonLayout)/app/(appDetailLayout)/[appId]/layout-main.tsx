@@ -1,15 +1,16 @@
 'use client'
+
+import type { AppDetailWithSite } from '@dify/contracts/api/console/apps/types.gen'
 import type { FC } from 'react'
-import type { App } from '@/types/app'
 import { cn } from '@langgenius/dify-ui/cn'
-import { useSuspenseQuery } from '@tanstack/react-query'
+import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
 import { useAtomValue } from 'jotai'
 import * as React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 import { useStore } from '@/app/components/app/store'
-import Loading from '@/app/components/base/loading'
+import { LoadingPlaceholder } from '@/app/components/base/loading-placeholder'
 import {
   workspacePermissionKeysAtom,
   workspacePermissionKeysLoadingAtom,
@@ -19,7 +20,7 @@ import { userProfileQueryOptions } from '@/features/account-profile/client'
 import { systemFeaturesQueryOptions } from '@/features/system-features/client'
 import useDocumentTitle from '@/hooks/use-document-title'
 import { usePathname, useRouter } from '@/next/navigation'
-import { fetchAppDetailDirect } from '@/service/apps'
+import { consoleClient, consoleQuery } from '@/service/console'
 import { AppModeEnum } from '@/types/app'
 import { getRedirectionPath } from '@/utils/app-redirection'
 import { getAppACLCapabilities } from '@/utils/permission'
@@ -43,9 +44,9 @@ const appDetailPageTitle = (pathname: string, t: ReturnType<typeof useTranslatio
     return t(($) => $['appMenus.annotations'], { ns: 'common' })
   if (pathname.endsWith('/overview')) return t(($) => $['appMenus.overview'], { ns: 'common' })
   if (pathname.endsWith('/access-config'))
-    return t(($) => $['settings.resourceAccess'], { ns: 'common' })
+    return t(($) => $['settings.resourceAccess'], { ns: 'navigation' })
 
-  return t(($) => $['menus.appDetail'], { ns: 'common' })
+  return t(($) => $['menus.appDetail'], { ns: 'navigation' })
 }
 
 const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
@@ -53,7 +54,7 @@ const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
     children,
     appId, // get appId in path
   } = props
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'navigation'])
   const router = useRouter()
   const pathname = usePathname()
   const { data: systemFeatures } = useSuspenseQuery(systemFeaturesQueryOptions())
@@ -73,13 +74,36 @@ const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
     })),
   )
   const [isLoadingAppDetail, setIsLoadingAppDetail] = useState(false)
-  const [appDetailRes, setAppDetailRes] = useState<App | null>(null)
+  const [appDetailRes, setAppDetailRes] = useState<AppDetailWithSite | null>(null)
   const routeAppDetail =
     appDetail?.id === appId ? appDetail : appDetailRes?.id === appId ? appDetailRes : null
   const pageTitle = appDetailPageTitle(pathname, t)
-  const appName = routeAppDetail?.id === appId ? routeAppDetail.name : undefined
+  const { data: appName } = useQuery(
+    consoleQuery.apps.byAppId.get.queryOptions({
+      input: { params: { app_id: appId } },
+      select: (detail) => detail.name,
+    }),
+  )
+  const shouldBlockAgentResourceAccess =
+    routeAppDetail?.mode === AppModeEnum.AGENT && pathname.endsWith('/access-config')
+  const canViewAccessPoint =
+    routeAppDetail?.id === appId &&
+    currentWorkspace.id &&
+    !isLoadingCurrentWorkspace &&
+    !isLoadingWorkspacePermissionKeys &&
+    !isLoadingAppDetail
+      ? getAppACLCapabilities(routeAppDetail.permission_keys, {
+          currentUserId,
+          resourceMaintainer: routeAppDetail.maintainer,
+          workspacePermissionKeys,
+          isRbacEnabled,
+        }).canViewAccessPoint
+      : false
+  const shouldBlockAccessPointAccess = pathname.endsWith('/access-point') && !canViewAccessPoint
 
-  useDocumentTitle(`${pageTitle} · ${appName || t(($) => $['menus.appDetail'], { ns: 'common' })}`)
+  useDocumentTitle(
+    `${pageTitle} · ${appName || t(($) => $['menus.appDetail'], { ns: 'navigation' })}`,
+  )
 
   useEffect(() => {
     let ignore = false
@@ -95,8 +119,9 @@ const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
     void Promise.resolve().then(() => {
       if (!ignore) setIsLoadingAppDetail(true)
     })
-    fetchAppDetailDirect({ url: '/apps', id: appId })
-      .then((res: App) => {
+    consoleClient.apps.byAppId
+      .get({ params: { app_id: appId } })
+      .then((res: AppDetailWithSite) => {
         if (ignore) return
 
         setAppDetailRes(res)
@@ -139,15 +164,20 @@ const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
     const isAnnotationsPath = pathname.endsWith('annotations')
     const isOverviewPath = pathname.endsWith('overview')
     const isAccessConfigPath = pathname.endsWith('access-config')
+    const isAccessPointPath = pathname.endsWith('access-point')
     const isDeployPath = pathname.endsWith('deploy')
     if (
       (isLayoutPath && !appACLCapabilities.canAccessLayout) ||
       (isLogsPath && !appACLCapabilities.canAccessLogAndAnnotation) ||
       (isAnnotationsPath && !appACLCapabilities.canAccessLogAndAnnotation) ||
       (isOverviewPath && !appACLCapabilities.canMonitor) ||
-      (isAccessConfigPath && !appACLCapabilities.canAccessConfig) ||
+      (isAccessConfigPath &&
+        (routeAppDetail.mode === AppModeEnum.AGENT || !appACLCapabilities.canAccessConfig)) ||
+      (isAccessPointPath && !appACLCapabilities.canViewAccessPoint) ||
       (isDeployPath &&
-        (routeAppDetail.mode !== AppModeEnum.WORKFLOW || !appACLCapabilities.canDeploy))
+        ((routeAppDetail.mode !== AppModeEnum.WORKFLOW &&
+          routeAppDetail.mode !== AppModeEnum.ADVANCED_CHAT) ||
+          !appACLCapabilities.canDeploy))
     ) {
       router.replace(
         getRedirectionPath(routeAppDetail, {
@@ -174,8 +204,7 @@ const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
       return
     }
 
-    if (appDetailRes && appDetail?.id !== appDetailRes.id)
-      setAppDetail({ ...appDetailRes, enable_sso: false })
+    if (appDetailRes && appDetail?.id !== appDetailRes.id) setAppDetail(appDetailRes)
   }, [
     appDetail?.id,
     appDetailRes,
@@ -194,27 +223,28 @@ const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
   ])
 
   const isWorkflowPage = pathname.endsWith('/workflow')
-  const content = !appDetail ? (
-    <div className="flex min-w-0 grow items-center justify-center bg-background-body">
-      <Loading />
-    </div>
-  ) : (
-    <div
-      className={cn(
-        'relative flex h-0 min-h-0 min-w-0 grow overflow-hidden',
-        !isWorkflowPage && 'pt-1 pr-1 pb-1',
-      )}
-    >
+  const content =
+    !appDetail || shouldBlockAgentResourceAccess || shouldBlockAccessPointAccess ? (
+      <div className="flex min-w-0 grow items-center justify-center bg-background-body">
+        <LoadingPlaceholder />
+      </div>
+    ) : (
       <div
         className={cn(
-          'min-w-0 grow overflow-hidden bg-components-panel-bg',
-          !isWorkflowPage && 'rounded-lg shadow-xs shadow-shadow-shadow-3',
+          'relative flex h-0 min-h-0 min-w-0 grow overflow-hidden',
+          !isWorkflowPage && 'pt-1 pr-1 pb-1',
         )}
       >
-        {children}
+        <div
+          className={cn(
+            'min-w-0 grow overflow-hidden bg-components-panel-bg',
+            !isWorkflowPage && 'rounded-lg shadow-xs shadow-shadow-shadow-3',
+          )}
+        >
+          {children}
+        </div>
       </div>
-    </div>
-  )
+    )
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background-body">

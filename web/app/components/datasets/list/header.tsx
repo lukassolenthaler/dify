@@ -63,7 +63,7 @@ const DatasetListHeader = ({
   stepByStepTourCreateMenuTarget,
   knowledgeViewSwitcherProps,
 }: Props) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'dataset'])
   const showCreateMenu = canCreateDataset || canConnectExternalDataset
   const createMenu = useStepByStepTourControlledDropdown({
     controlledOpen: stepByStepTourCreateMenuOpen,
@@ -152,7 +152,7 @@ const DatasetListHeader = ({
                     ? stepByStepTourCreateMenuHighlightPart
                     : undefined,
                   interactionMode: createMenu.controlled ? 'presentation' : 'interactive',
-                  popupClassName: 'w-80',
+                  className: 'w-80',
                 })}
               >
                 {canCreateDataset && (

@@ -10,7 +10,8 @@ from sqlalchemy import select
 from configs import dify_config
 from core.app.entities.app_invoke_entities import DIFY_RUN_CONTEXT_KEY, DifyRunContext
 from core.app.llm.model_access import build_dify_model_access, fetch_model_config
-from core.db.session_factory import session_factory
+from core.credit_usage import created_by_from_app_type
+from core.db.session_factory import get_session_maker, session_factory
 from core.file import remote_fetcher
 from core.helper.code_executor.code_executor import (
     CodeExecutionError,
@@ -54,6 +55,7 @@ from core.workflow.nodes.human_input.callback import DifyHITLCallback
 from core.workflow.nodes.human_input.entities import HumanInputNodeData as DifyHumanInputNodeData
 from core.workflow.system_variables import SystemVariableKey, get_system_text, system_variable_selector
 from core.workflow.template_rendering import CodeExecutorJinja2TemplateRenderer
+from extensions.application_services.data_sources import build_data_source_credentials
 from graphon.entities.base_node_data import BaseNodeData
 from graphon.entities.graph_config import NodeConfigDict, NodeConfigDictAdapter
 from graphon.enums import BuiltinNodeTypes, NodeType
@@ -430,6 +432,11 @@ class DifyNodeFactory(NodeFactory):
             resolved_node_data = self._resolve_llm_model_reference(cast(LLMNodeData, resolved_node_data))
         node: Node | None = None
         node_init_kwargs_factories: Mapping[NodeType, Callable[[], dict[str, object]]] = {
+            BuiltinNodeTypes.DATASOURCE: lambda: {
+                "datasource_credentials": build_data_source_credentials(
+                    database_client=get_session_maker()
+                ).providers.get_datasource_credentials,
+            },
             BuiltinNodeTypes.CODE: lambda: {
                 "code_executor": self._code_executor,
                 "code_limits": self._code_limits,
@@ -616,11 +623,20 @@ class DifyNodeFactory(NodeFactory):
     ) -> dict[str, object]:
         validated_node_data = cast(LLMCompatibleNodeData, node_data)
         model_instance = self._build_model_instance_for_llm_node(validated_node_data)
+        request_metadata: dict[str, object] = {"app_id": self._dify_context.app_id}
+        app_type = self._dify_context.app_type
+        created_by = self._dify_context.created_by
+        if app_type is not None:
+            request_metadata["app_type"] = app_type
+            request_metadata["created_by"] = created_by_from_app_type(app_type)
+        elif created_by is not None:
+            request_metadata["created_by"] = created_by
+
         node_model_instance = (
             self._wrap_model_instance_for_node(
                 node_data=validated_node_data,
                 model_instance=model_instance,
-                request_metadata={"app_id": self._dify_context.app_id},
+                request_metadata=request_metadata,
             )
             if wrap_model_instance
             else model_instance

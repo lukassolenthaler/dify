@@ -3,11 +3,11 @@ import type { FC } from 'react'
 import type { ToolWithProvider } from '../../../workflow/types'
 import {
   AlertDialog,
-  AlertDialogActions,
   AlertDialogCancelButton,
   AlertDialogConfirmButton,
   AlertDialogContent,
   AlertDialogDescription,
+  AlertDialogFooter,
   AlertDialogTitle,
 } from '@langgenius/dify-ui/alert-dialog'
 import { Button } from '@langgenius/dify-ui/button'
@@ -53,7 +53,7 @@ const MCPDetailContent: FC<Props> = ({
   isTriggerAuthorize,
   onFirstCreate,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'tools'])
   const canManageMCP = useCanManageMCP()
 
   const { data, isFetching: isGettingTools } = useMCPTools(
@@ -150,11 +150,11 @@ const MCPDetailContent: FC<Props> = ({
                       type="button"
                       variant="ghost"
                       size="small"
-                      aria-label={identifierLabel}
                       className="h-auto shrink-0 cursor-pointer rounded bg-transparent p-0 text-left system-xs-regular text-text-secondary hover:bg-transparent focus-visible:ring-2 focus-visible:ring-state-accent-solid"
                       onClick={() => copy(detail.server_identifier || '')}
                     >
                       {detail.server_identifier}
+                      <span className="sr-only"> {identifierLabel}</span>
                     </Button>
                   }
                 />
@@ -164,10 +164,8 @@ const MCPDetailContent: FC<Props> = ({
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <div
-                      aria-label={serverUrlLabel}
-                      className="truncate system-xs-regular text-text-secondary"
-                    >
+                    <div className="truncate system-xs-regular text-text-secondary">
+                      <span className="sr-only">{`${serverUrlLabel}: `}</span>
                       {detail.server_url}
                     </div>
                   }
@@ -315,14 +313,14 @@ const MCPDetailContent: FC<Props> = ({
               {t(($) => $['mcp.toolUpdateConfirmContent'], { ns: 'tools' })}
             </AlertDialogDescription>
           </div>
-          <AlertDialogActions>
+          <AlertDialogFooter>
             <AlertDialogCancelButton>
               {t(($) => $['operation.cancel'], { ns: 'common' })}
             </AlertDialogCancelButton>
             <AlertDialogConfirmButton onClick={handleUpdateTools}>
               {t(($) => $['operation.confirm'], { ns: 'common' })}
             </AlertDialogConfirmButton>
-          </AlertDialogActions>
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>

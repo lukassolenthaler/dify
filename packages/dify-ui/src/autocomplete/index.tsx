@@ -6,7 +6,8 @@ import type { Placement } from '../placement'
 import { Autocomplete as BaseAutocomplete } from '@base-ui/react/autocomplete'
 import { cva } from 'class-variance-authority'
 import { cn } from '../cn'
-import { textControlCompoundInputFocusClassName } from '../form-control-shared'
+import { textControlGroupClassName } from '../form-control-shared'
+import { resolveClassName } from '../internals/resolve-class-name'
 import {
   floatingGroupLabelClassName,
   floatingItemIndicatorClassName,
@@ -15,8 +16,11 @@ import {
 } from '../overlay-shared'
 import { parsePlacement } from '../placement'
 
+type AutocompleteActions = BaseAutocomplete.Root.Actions
+
 type AutocompleteProps<ItemValue> = BaseAutocomplete.Root.Props<ItemValue>
 type AutocompleteChangeEventDetails = BaseAutocomplete.Root.ChangeEventDetails
+type AutocompleteOpenChangeEventDetails = BaseAutocomplete.Root.OpenChangeEventDetails
 type AutocompleteGroupedProps<Items extends readonly { items: readonly unknown[] }[]> = Omit<
   AutocompleteProps<Items[number]['items'][number]>,
   'items'
@@ -38,7 +42,8 @@ function Autocomplete(props: AutocompleteProps<unknown>): React.JSX.Element {
 const AutocompleteValue = BaseAutocomplete.Value
 const AutocompleteRow = BaseAutocomplete.Row
 const useAutocompleteFilter = BaseAutocomplete.useFilter
-const useAutocompleteFilteredItems = BaseAutocomplete.useFilteredItems
+const useAutocompleteFilteredItems: <Value>() => readonly Value[] =
+  BaseAutocomplete.useFilteredItems
 
 type AutocompleteValueProps = BaseAutocomplete.Value.Props
 type AutocompleteRowProps = BaseAutocomplete.Row.Props
@@ -62,8 +67,10 @@ function AutocompleteCollection<Value = unknown>(props: AutocompleteCollectionPr
   return <BaseAutocomplete.Collection {...props} />
 }
 
+// The popup is limited to the available height and lays its parts out in a column, so a status or input
+// sharing it with the list leaves the list to shrink. The popup scrolls only when nothing can.
 const autocompletePopupClassName = [
-  'w-(--anchor-width) max-w-[min(28rem,var(--available-width))] overflow-hidden rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg shadow-lg outline-hidden',
+  'flex max-h-(--available-height) w-(--anchor-width) max-w-[min(28rem,var(--available-width))] flex-col overflow-x-hidden overflow-y-auto rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg shadow-lg outline-hidden',
 ]
 
 const autocompleteListClassName = [
@@ -73,22 +80,12 @@ const autocompleteListClassName = [
 
 const autocompleteItemClassName = [
   'mx-1 flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-lg px-2 py-1.5 text-text-secondary outline-hidden',
-  'hover:bg-state-base-hover-alt hover:text-text-primary',
   'data-highlighted:bg-state-base-hover data-highlighted:text-text-primary',
-  'data-disabled:cursor-not-allowed data-disabled:opacity-30 data-disabled:hover:bg-transparent data-disabled:hover:text-text-secondary',
+  'data-disabled:cursor-not-allowed data-disabled:opacity-30',
 ]
 
 const autocompleteInputGroupVariants = cva(
-  [
-    'group/autocomplete flex w-full min-w-0 items-center border border-transparent bg-components-input-bg-normal text-components-input-text-filled shadow-none outline-hidden transition-[background-color,border-color,box-shadow]',
-    'hover:border-components-input-border-hover hover:bg-components-input-bg-hover',
-    textControlCompoundInputFocusClassName,
-    'data-focused:border-components-input-border-active data-focused:bg-components-input-bg-active data-focused:shadow-xs',
-    'data-disabled:cursor-not-allowed data-disabled:border-transparent data-disabled:bg-components-input-bg-disabled data-disabled:text-components-input-text-filled-disabled',
-    'data-disabled:hover:border-transparent data-disabled:hover:bg-components-input-bg-disabled',
-    'data-readonly:shadow-none data-readonly:hover:border-transparent data-readonly:hover:bg-components-input-bg-normal',
-    'motion-reduce:transition-none',
-  ],
+  [textControlGroupClassName, 'group/autocomplete items-center'],
   {
     variants: {
       size: {
@@ -103,8 +100,8 @@ const autocompleteInputGroupVariants = cva(
   },
 )
 
-type AutocompleteInputGroupProps = Omit<BaseAutocomplete.InputGroup.Props, 'className'> &
-  VariantProps<typeof autocompleteInputGroupVariants> & { className?: string }
+type AutocompleteInputGroupProps = BaseAutocomplete.InputGroup.Props &
+  VariantProps<typeof autocompleteInputGroupVariants>
 
 function AutocompleteInputGroup({
   className,
@@ -113,7 +110,9 @@ function AutocompleteInputGroup({
 }: AutocompleteInputGroupProps) {
   return (
     <BaseAutocomplete.InputGroup
-      className={cn(autocompleteInputGroupVariants({ size }), className)}
+      className={(state) =>
+        cn(autocompleteInputGroupVariants({ size }), resolveClassName(className, state))
+      }
       {...props}
     />
   )
@@ -140,8 +139,8 @@ const autocompleteInputVariants = cva(
   },
 )
 
-type AutocompleteInputProps = Omit<BaseAutocomplete.Input.Props, 'className' | 'size'> &
-  VariantProps<typeof autocompleteInputVariants> & { className?: string }
+type AutocompleteInputProps = Omit<BaseAutocomplete.Input.Props, 'size'> &
+  VariantProps<typeof autocompleteInputVariants>
 
 function AutocompleteInput({
   className,
@@ -152,7 +151,9 @@ function AutocompleteInput({
   return (
     <BaseAutocomplete.Input
       autoComplete={autoComplete}
-      className={cn(autocompleteInputVariants({ size }), className)}
+      className={(state) =>
+        cn(autocompleteInputVariants({ size }), resolveClassName(className, state))
+      }
       {...props}
     />
   )
@@ -182,8 +183,8 @@ const autocompleteControlVariants = cva(
   },
 )
 
-type AutocompleteTriggerProps = Omit<BaseAutocomplete.Trigger.Props, 'className'> &
-  VariantProps<typeof autocompleteControlVariants> & { className?: string }
+type AutocompleteTriggerProps = BaseAutocomplete.Trigger.Props &
+  VariantProps<typeof autocompleteControlVariants>
 
 function AutocompleteTrigger({
   className,
@@ -199,7 +200,9 @@ function AutocompleteTrigger({
         props['aria-label'] ??
         (props['aria-labelledby'] ? undefined : 'Open autocomplete suggestions')
       }
-      className={cn(autocompleteControlVariants({ size }), className)}
+      className={(state) =>
+        cn(autocompleteControlVariants({ size }), resolveClassName(className, state))
+      }
       {...props}
     >
       {children ?? <span className="i-ri-arrow-down-s-line size-4" aria-hidden="true" />}
@@ -207,8 +210,8 @@ function AutocompleteTrigger({
   )
 }
 
-type AutocompleteClearProps = Omit<BaseAutocomplete.Clear.Props, 'className'> &
-  VariantProps<typeof autocompleteControlVariants> & { className?: string }
+type AutocompleteClearProps = BaseAutocomplete.Clear.Props &
+  VariantProps<typeof autocompleteControlVariants>
 
 function AutocompleteClear({
   className,
@@ -223,11 +226,13 @@ function AutocompleteClear({
       aria-label={
         props['aria-label'] ?? (props['aria-labelledby'] ? undefined : 'Clear autocomplete')
       }
-      className={cn(
-        autocompleteControlVariants({ size }),
-        'data-ending-style:opacity-0 data-starting-style:opacity-0',
-        className,
-      )}
+      className={(state) =>
+        cn(
+          autocompleteControlVariants({ size }),
+          'data-ending-style:opacity-0 data-starting-style:opacity-0',
+          resolveClassName(className, state),
+        )
+      }
       {...props}
     >
       {children ?? <span className="i-ri-close-line size-4" aria-hidden="true" />}
@@ -235,14 +240,14 @@ function AutocompleteClear({
   )
 }
 
-type AutocompleteIconProps = Omit<BaseAutocomplete.Icon.Props, 'className'> & {
-  className?: string
-}
+type AutocompleteIconProps = BaseAutocomplete.Icon.Props
 
 function AutocompleteIcon({ className, children, ...props }: AutocompleteIconProps) {
   return (
     <BaseAutocomplete.Icon
-      className={cn('flex shrink-0 items-center text-text-tertiary', className)}
+      className={(state) =>
+        cn('flex shrink-0 items-center text-text-tertiary', resolveClassName(className, state))
+      }
       {...props}
     >
       {children ?? <span className="i-ri-arrow-down-s-line size-4" aria-hidden="true" />}
@@ -253,11 +258,7 @@ function AutocompleteIcon({ className, children, ...props }: AutocompleteIconPro
 const AutocompletePortal = BaseAutocomplete.Portal
 type AutocompletePortalProps = BaseAutocomplete.Portal.Props
 
-type AutocompletePositionerProps = Omit<
-  BaseAutocomplete.Positioner.Props,
-  'className' | 'side' | 'align'
-> & {
-  className?: string
+type AutocompletePositionerProps = Omit<BaseAutocomplete.Positioner.Props, 'side' | 'align'> & {
   placement?: Placement
 }
 
@@ -274,47 +275,53 @@ function AutocompletePositioner({
       side={side}
       align={align}
       sideOffset={sideOffset}
-      className={cn('z-50 outline-hidden', className)}
+      className={(state) => cn('z-50 outline-hidden', resolveClassName(className, state))}
       {...props}
     />
   )
 }
 
-type AutocompletePopupProps = Omit<BaseAutocomplete.Popup.Props, 'className'> & {
-  className?: string
-}
+type AutocompletePopupProps = BaseAutocomplete.Popup.Props
 
 function AutocompletePopup({ className, ...props }: AutocompletePopupProps) {
   return (
     <BaseAutocomplete.Popup
-      className={cn(autocompletePopupClassName, floatingPopupAnimationClassName, className)}
+      className={(state) =>
+        cn(
+          autocompletePopupClassName,
+          floatingPopupAnimationClassName,
+          resolveClassName(className, state),
+        )
+      }
       {...props}
     />
   )
 }
 
-type AutocompleteListProps<Value = unknown> = Omit<
-  BaseAutocomplete.List.Props,
-  'children' | 'className'
-> & {
+type AutocompleteListProps<Value = unknown> = Omit<BaseAutocomplete.List.Props, 'children'> & {
   children?: React.ReactNode | ((item: Value, index: number) => React.ReactNode)
-  className?: string
 }
 
 function AutocompleteList<Value = unknown>({ className, ...props }: AutocompleteListProps<Value>) {
-  return <BaseAutocomplete.List className={cn(autocompleteListClassName, className)} {...props} />
+  return (
+    <BaseAutocomplete.List
+      className={(state) => cn(autocompleteListClassName, resolveClassName(className, state))}
+      {...props}
+    />
+  )
 }
 
-type AutocompleteItemProps<Value = unknown> = Omit<
-  BaseAutocomplete.Item.Props,
-  'className' | 'value'
-> & {
-  className?: string
+type AutocompleteItemProps<Value = unknown> = Omit<BaseAutocomplete.Item.Props, 'value'> & {
   value?: Value
 }
 
 function AutocompleteItem<Value = unknown>({ className, ...props }: AutocompleteItemProps<Value>) {
-  return <BaseAutocomplete.Item className={cn(autocompleteItemClassName, className)} {...props} />
+  return (
+    <BaseAutocomplete.Item
+      className={(state) => cn(autocompleteItemClassName, resolveClassName(className, state))}
+      {...props}
+    />
+  )
 }
 
 type AutocompleteItemTextProps = React.ComponentProps<'span'>
@@ -325,53 +332,52 @@ function AutocompleteItemText({ className, ...props }: AutocompleteItemTextProps
   )
 }
 
-type AutocompleteGroupLabelProps = Omit<BaseAutocomplete.GroupLabel.Props, 'className'> & {
-  className?: string
-}
+type AutocompleteGroupLabelProps = BaseAutocomplete.GroupLabel.Props
 
 function AutocompleteGroupLabel({ className, ...props }: AutocompleteGroupLabelProps) {
   return (
     <BaseAutocomplete.GroupLabel
-      className={cn(floatingGroupLabelClassName, className)}
+      className={(state) => cn(floatingGroupLabelClassName, resolveClassName(className, state))}
       {...props}
     />
   )
 }
 
-type AutocompleteSeparatorProps = Omit<BaseAutocomplete.Separator.Props, 'className'> & {
-  className?: string
-}
+type AutocompleteSeparatorProps = BaseAutocomplete.Separator.Props
 
 function AutocompleteSeparator({ className, ...props }: AutocompleteSeparatorProps) {
   return (
-    <BaseAutocomplete.Separator className={cn(floatingSeparatorClassName, className)} {...props} />
+    <BaseAutocomplete.Separator
+      className={(state) => cn(floatingSeparatorClassName, resolveClassName(className, state))}
+      {...props}
+    />
   )
 }
 
-type AutocompleteEmptyProps = Omit<BaseAutocomplete.Empty.Props, 'className'> & {
-  className?: string
-}
+type AutocompleteEmptyProps = BaseAutocomplete.Empty.Props
 
 function AutocompleteEmpty({ className, ...props }: AutocompleteEmptyProps) {
   return (
     <BaseAutocomplete.Empty
-      className={cn(
-        'px-3 py-2 system-sm-regular text-text-tertiary empty:h-0 empty:p-0',
-        className,
-      )}
+      className={(state) =>
+        cn(
+          'px-3 py-2 system-sm-regular text-text-tertiary empty:h-0 empty:p-0',
+          resolveClassName(className, state),
+        )
+      }
       {...props}
     />
   )
 }
 
-type AutocompleteStatusProps = Omit<BaseAutocomplete.Status.Props, 'className'> & {
-  className?: string
-}
+type AutocompleteStatusProps = BaseAutocomplete.Status.Props
 
 function AutocompleteStatus({ className, ...props }: AutocompleteStatusProps) {
   return (
     <BaseAutocomplete.Status
-      className={cn('px-3 py-2 system-sm-regular text-text-tertiary', className)}
+      className={(state) =>
+        cn('px-3 py-2 system-sm-regular text-text-tertiary', resolveClassName(className, state))
+      }
       {...props}
     />
   )
@@ -418,6 +424,7 @@ export {
 }
 
 export type {
+  AutocompleteActions,
   AutocompleteChangeEventDetails,
   AutocompleteClearProps,
   AutocompleteCollectionProps,
@@ -433,6 +440,7 @@ export type {
   AutocompleteItemProps,
   AutocompleteItemTextProps,
   AutocompleteListProps,
+  AutocompleteOpenChangeEventDetails,
   AutocompletePopupProps,
   AutocompletePortalProps,
   AutocompletePositionerProps,

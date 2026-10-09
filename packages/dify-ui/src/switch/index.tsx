@@ -6,12 +6,16 @@ import type * as React from 'react'
 import { Switch as BaseSwitch } from '@base-ui/react/switch'
 import { cva } from 'class-variance-authority'
 import { cn } from '../cn'
-
-const switchRootStateClassName =
-  'bg-components-toggle-bg-unchecked hover:bg-components-toggle-bg-unchecked-hover data-checked:bg-components-toggle-bg data-checked:hover:bg-components-toggle-bg-hover data-disabled:cursor-not-allowed data-disabled:bg-components-toggle-bg-unchecked-disabled data-disabled:hover:bg-components-toggle-bg-unchecked-disabled data-disabled:data-checked:bg-components-toggle-bg-disabled data-disabled:data-checked:hover:bg-components-toggle-bg-disabled'
+import { checkedControlFocusClassName } from '../form-control-shared'
+import { resolveClassName } from '../internals/resolve-class-name'
 
 const switchRootVariants = cva(
-  `group relative inline-flex shrink-0 cursor-pointer touch-manipulation items-center outline-hidden transition-colors duration-200 ease-in-out focus-visible:ring-2 focus-visible:ring-state-accent-solid motion-reduce:transition-none ${switchRootStateClassName}`,
+  [
+    'group relative inline-flex shrink-0 cursor-pointer touch-manipulation items-center transition-colors duration-200 ease-in-out motion-reduce:transition-none',
+    checkedControlFocusClassName,
+    'bg-components-toggle-bg-unchecked hover:bg-components-toggle-bg-unchecked-hover data-checked:bg-components-toggle-bg data-checked:hover:bg-components-toggle-bg-hover',
+    'data-disabled:cursor-not-allowed data-disabled:bg-components-toggle-bg-unchecked-disabled data-disabled:hover:bg-components-toggle-bg-unchecked-disabled data-disabled:data-checked:bg-components-toggle-bg-disabled data-disabled:data-checked:hover:bg-components-toggle-bg-disabled',
+  ],
   {
     variants: {
       size: {
@@ -67,13 +71,11 @@ type SwitchControlProps = ControlledSwitchProps | UncontrolledSwitchProps
 
 type SwitchProps = Omit<
   BaseSwitchNS.Root.Props,
-  'checked' | 'defaultChecked' | 'className' | 'size' | 'onCheckedChange'
+  'checked' | 'children' | 'defaultChecked' | 'size'
 > &
   VariantProps<typeof switchRootVariants> &
   SwitchControlProps & {
-    onCheckedChange?: (checked: boolean) => void
     loading?: boolean
-    className?: string
   }
 
 function Switch({
@@ -82,7 +84,6 @@ function Switch({
   disabled,
   loading = false,
   className,
-  onCheckedChange,
   ...props
 }: SwitchProps) {
   const isDisabled = disabled || loading
@@ -92,8 +93,7 @@ function Switch({
       checked={checked}
       disabled={isDisabled}
       aria-busy={loading || undefined}
-      className={cn(switchRootVariants({ size }), className)}
-      onCheckedChange={(value) => onCheckedChange?.(value)}
+      className={(state) => cn(switchRootVariants({ size }), resolveClassName(className, state))}
       {...props}
     >
       <BaseSwitch.Thumb className={switchThumbVariants({ size })} />

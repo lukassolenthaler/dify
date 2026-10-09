@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import type { PluginDeclaration, PluginDetail } from '../../types'
 import { fireEvent, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 import { renderWithConsoleQuery } from '@/test/console/query-data'
 import { PluginCategoryEnum, PluginSource } from '../../types'
@@ -32,13 +33,13 @@ vi.mock('../../hooks', () => ({
   }),
 }))
 
-const mockCurrentPluginID = vi.fn((): string | undefined => undefined)
-const mockSetCurrentPluginID = vi.fn()
+const mockSelectedItem = vi.fn((): { type: 'plugin'; id: string } | undefined => undefined)
+const mockSetSelectedItem = vi.fn()
 vi.mock('../../plugin-page/context', () => ({
   usePluginPageContext: (selector: (v: Record<string, unknown>) => unknown) => {
     const context = {
-      currentPluginID: mockCurrentPluginID(),
-      setCurrentPluginID: mockSetCurrentPluginID,
+      selectedItem: mockSelectedItem(),
+      setSelectedItem: mockSetSelectedItem,
     }
     return selector(context)
   },
@@ -174,7 +175,7 @@ describe('PluginItem', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockTheme.mockReturnValue('light')
-    mockCurrentPluginID.mockReturnValue(undefined)
+    mockSelectedItem.mockReturnValue(undefined)
     mockEnableMarketplace.mockReturnValue(true)
     mockLangGeniusVersionInfo.mockReturnValue(createLangGeniusVersionInfo('1.0.0'))
     mockGetValueFromI18nObject.mockImplementation((obj: Record<string, string>) => obj?.en_US || '')
@@ -195,7 +196,7 @@ describe('PluginItem', () => {
       expect(screen.getByTestId('version-badge')).toBeInTheDocument()
     })
 
-    it('should render plugin icon', () => {
+    it('should keep the plugin name visible without exposing a decorative image', () => {
       // Arrange
       const plugin = createPluginDetail()
 
@@ -203,12 +204,8 @@ describe('PluginItem', () => {
       render(<PluginItem plugin={plugin} />)
 
       // Assert
-      const img = screen.getByRole('img')
-      expect(img).toHaveAttribute('alt', `plugin-${plugin.plugin_unique_identifier}-logo`)
-      expect(img).toHaveAttribute('loading', 'lazy')
-      expect(img).toHaveAttribute('decoding', 'async')
-      expect(img).toHaveAttribute('width', '40')
-      expect(img).toHaveAttribute('height', '40')
+      expect(screen.queryByRole('img')).not.toBeInTheDocument()
+      expect(screen.getByText('Test Plugin')).toBeVisible()
     })
 
     it('should not render category label in corner mark', () => {
@@ -588,22 +585,47 @@ describe('PluginItem', () => {
 
   // ==================== User Interactions Tests ====================
   describe('User Interactions', () => {
-    it('should call setCurrentPluginID when plugin is clicked', () => {
+    it('should select the plugin with the named card button using Enter or Space', async () => {
       // Arrange
       const plugin = createPluginDetail({ plugin_id: 'test-plugin-id' })
+      const user = userEvent.setup()
 
       // Act
-      const { container } = render(<PluginItem plugin={plugin} />)
-      const pluginContainer = container.firstChild as HTMLElement
-      fireEvent.click(pluginContainer)
+      render(<PluginItem plugin={plugin} />)
+      const cardButton = screen.getByRole('button', { name: 'Test Plugin' })
+      await user.tab()
+      expect(cardButton).toHaveFocus()
+      await user.keyboard('{Enter}')
+      await user.keyboard(' ')
 
       // Assert
-      expect(mockSetCurrentPluginID).toHaveBeenCalledWith('test-plugin-id')
+      expect(mockSetSelectedItem).toHaveBeenNthCalledWith(1, {
+        type: 'plugin',
+        id: 'test-plugin-id',
+      })
+      expect(mockSetSelectedItem).toHaveBeenNthCalledWith(2, {
+        type: 'plugin',
+        id: 'test-plugin-id',
+      })
+    })
+
+    it('should keep source links and actions separate from the card button', async () => {
+      const user = userEvent.setup()
+      render(<PluginItem plugin={createPluginDetail()} />)
+
+      const cardButton = screen.getByRole('button', { name: 'Test Plugin' })
+      const marketplaceLink = screen.getByRole('link')
+      const deleteButton = screen.getByTestId('delete-button')
+      expect(cardButton).not.toContainElement(marketplaceLink)
+      expect(cardButton).not.toContainElement(deleteButton)
+
+      await user.click(deleteButton)
+      expect(mockSetSelectedItem).not.toHaveBeenCalled()
     })
 
     it('should highlight selected plugin', () => {
       // Arrange
-      mockCurrentPluginID.mockReturnValue('test-plugin-id')
+      mockSelectedItem.mockReturnValue({ type: 'plugin', id: 'test-plugin-id' })
       const plugin = createPluginDetail({ plugin_id: 'test-plugin-id' })
 
       // Act
@@ -611,12 +633,14 @@ describe('PluginItem', () => {
 
       // Assert
       const pluginContainer = container.firstChild as HTMLElement
-      expect(pluginContainer).toHaveClass('border-components-option-card-option-selected-border')
+      expect(pluginContainer).toHaveClass(
+        'after:inset-ring-components-option-card-option-selected-border',
+      )
     })
 
     it('should not highlight unselected plugin', () => {
       // Arrange
-      mockCurrentPluginID.mockReturnValue('other-plugin-id')
+      mockSelectedItem.mockReturnValue({ type: 'plugin', id: 'other-plugin-id' })
       const plugin = createPluginDetail({ plugin_id: 'test-plugin-id' })
 
       // Act
@@ -625,7 +649,7 @@ describe('PluginItem', () => {
       // Assert
       const pluginContainer = container.firstChild as HTMLElement
       expect(pluginContainer).not.toHaveClass(
-        'border-components-option-card-option-selected-border',
+        'after:inset-ring-components-option-card-option-selected-border',
       )
     })
 
@@ -638,8 +662,8 @@ describe('PluginItem', () => {
       const actionArea = screen.getByTestId('plugin-action').parentElement
       fireEvent.click(actionArea!)
 
-      // Assert - setCurrentPluginID should not be called
-      expect(mockSetCurrentPluginID).not.toHaveBeenCalled()
+      // Assert - selecting the plugin should not be triggered
+      expect(mockSetSelectedItem).not.toHaveBeenCalled()
     })
 
     it('should only reveal actions on card hover or focus', () => {
@@ -651,9 +675,18 @@ describe('PluginItem', () => {
 
       // Assert
       expect(screen.getByTestId('plugin-action').parentElement).toHaveClass(
+        'absolute',
+        'top-1/2',
+        'right-0',
+        '-translate-y-1/2',
+        'pointer-events-none',
         'opacity-0',
+        'group-hover/plugin-item:pointer-events-auto',
         'group-hover/plugin-item:opacity-100',
-        'focus-within:opacity-100',
+        'group-focus-within/plugin-item:pointer-events-auto',
+        'group-focus-within/plugin-item:opacity-100',
+        '[@media(hover:none)]:pointer-events-auto',
+        '[@media(hover:none)]:opacity-100',
       )
     })
   })
@@ -705,7 +738,7 @@ describe('PluginItem', () => {
       render(<PluginItem plugin={plugin} />)
 
       // Assert
-      const img = screen.getByRole('img')
+      const img = screen.getByRole('presentation')
       expect(img.getAttribute('src')).toContain('dark-icon.png')
     })
 
@@ -723,7 +756,7 @@ describe('PluginItem', () => {
       render(<PluginItem plugin={plugin} />)
 
       // Assert
-      const img = screen.getByRole('img')
+      const img = screen.getByRole('presentation')
       expect(img.getAttribute('src')).toContain('light-icon.png')
     })
 
@@ -741,7 +774,7 @@ describe('PluginItem', () => {
       render(<PluginItem plugin={plugin} />)
 
       // Assert
-      const img = screen.getByRole('img')
+      const img = screen.getByRole('presentation')
       expect(img.getAttribute('src')).toContain('light-icon.png')
     })
 
@@ -757,7 +790,7 @@ describe('PluginItem', () => {
       render(<PluginItem plugin={plugin} />)
 
       // Assert
-      const img = screen.getByRole('img')
+      const img = screen.getByRole('presentation')
       expect(img).toHaveAttribute('src', 'https://example.com/icon.png')
     })
   })
@@ -837,7 +870,7 @@ describe('PluginItem', () => {
       expect(() => render(<PluginItem plugin={plugin} />)).not.toThrow()
 
       // The img element should still be rendered
-      const img = screen.getByRole('img')
+      const img = screen.getByRole('presentation')
       expect(img).toBeInTheDocument()
     })
 

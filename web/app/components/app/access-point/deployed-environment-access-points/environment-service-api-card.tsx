@@ -1,28 +1,31 @@
 'use client'
 
-import { toast } from '@langgenius/dify-ui/toast'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useSuspenseQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { useStore as useAppStore } from '@/app/components/app/store'
-import { consoleQuery } from '@/service/client'
+import { toast } from '@/app/notifications'
+import { consoleQuery } from '@/service/console'
 import { ServiceApiCardView } from '../shared/service-api-card-view'
 
 type EnvironmentServiceApiCardProps = {
   appId: string
   environmentId: string
-  canManage: boolean
+  canManageAccessPoint: boolean
   highlighted?: boolean
 }
 
 export function EnvironmentServiceApiCard({
   appId,
   environmentId,
-  canManage,
+  canManageAccessPoint,
   highlighted,
 }: EnvironmentServiceApiCardProps) {
-  const { t } = useTranslation()
-  const queryClient = useQueryClient()
-  const appMode = useAppStore((state) => state.appDetail?.mode)
+  const { t } = useTranslation(['common'])
+  const { data: appMode } = useSuspenseQuery(
+    consoleQuery.apps.byAppId.get.queryOptions({
+      input: { params: { app_id: appId } },
+      select: (appDetail) => appDetail.mode,
+    }),
+  )
   const params = {
     app_id: appId,
     environment_id: environmentId,
@@ -35,16 +38,18 @@ export function EnvironmentServiceApiCard({
   const api = apiQuery.data
   const apiMutation = useMutation(
     consoleQuery.enterprise.appDeploy.accessService.updateEnvironmentApi.mutationOptions({
-      onSuccess: (updatedApi) => {
-        queryClient.setQueryData(apiQueryOptions.queryKey, updatedApi)
-        toast.success(t(($) => $['actionMsg.modifiedSuccessfully'], { ns: 'common' }))
+      scope: {
+        id: `environment-service-api-toggle:${appId}:${environmentId}`,
       },
       onError: () => {
         toast.error(t(($) => $['actionMsg.modifiedUnsuccessfully'], { ns: 'common' }))
       },
     }),
   )
-  const running = Boolean(apiQuery.isSuccess && api?.enabled)
+  const pendingEnabled = apiMutation.variables?.body.enabled
+  const optimisticEnabled =
+    apiMutation.isPending && pendingEnabled !== undefined ? pendingEnabled : Boolean(api?.enabled)
+  const running = apiQuery.isSuccess && optimisticEnabled
   const status = apiQuery.isPending
     ? 'loading'
     : apiQuery.isError
@@ -54,7 +59,7 @@ export function EnvironmentServiceApiCard({
         : 'disabled'
 
   const handleEnabledChange = (enabled: boolean) => {
-    if (!canManage) return
+    if (!canManageAccessPoint) return
 
     apiMutation.mutate({
       params,
@@ -68,7 +73,7 @@ export function EnvironmentServiceApiCard({
         appId,
         environmentId,
         apiKeyCount: api?.api_key_count,
-        canManage,
+        canManage: canManageAccessPoint,
         disabled: !apiQuery.isSuccess,
       }}
       apiUrl={api?.base_url ?? ''}
@@ -76,9 +81,8 @@ export function EnvironmentServiceApiCard({
       available={apiQuery.isSuccess}
       status={status}
       highlighted={highlighted}
-      switchDisabled={!canManage}
+      switchDisabled={!canManageAccessPoint}
       onEnabledChange={apiQuery.isSuccess ? handleEnabledChange : undefined}
-      busy={apiMutation.isPending}
     />
   )
 }

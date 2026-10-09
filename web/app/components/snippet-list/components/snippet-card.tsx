@@ -3,14 +3,13 @@
 import type { SnippetListItem } from '@/types/snippet'
 import {
   AlertDialog,
-  AlertDialogActions,
   AlertDialogCancelButton,
   AlertDialogConfirmButton,
   AlertDialogContent,
   AlertDialogDescription,
+  AlertDialogFooter,
   AlertDialogTitle,
 } from '@langgenius/dify-ui/alert-dialog'
-import { cn } from '@langgenius/dify-ui/cn'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,7 +17,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@langgenius/dify-ui/dropdown-menu'
-import { toast } from '@langgenius/dify-ui/toast'
 import { useAtomValue } from 'jotai'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -27,6 +25,7 @@ import {
   canCreateAndModifySnippets,
   canManageSnippets,
 } from '@/app/components/snippets/utils/permission'
+import { toast } from '@/app/notifications'
 import { workspacePermissionKeysAtom } from '@/context/permission-state'
 import { TagSelector } from '@/features/tag-management/components/tag-selector'
 import Link from '@/next/link'
@@ -52,8 +51,8 @@ const SnippetCard = ({
   onRefresh,
   onTagsChange,
 }: Props) => {
-  const { t } = useTranslation('snippet')
-  const { t: tCommon } = useTranslation()
+  const { t } = useTranslation(['snippet', 'datasetDocuments'])
+  const { t: tCommon } = useTranslation(['common'])
   const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
   const { data: membersData } = useMembers()
   const [isOperationsMenuOpen, setIsOperationsMenuOpen] = useState(false)
@@ -180,6 +179,7 @@ const SnippetCard = ({
                 type="snippet"
                 targetId={snippet.id}
                 value={snippet.tags}
+                contextLabel={snippet.name}
                 onOpenTagManagement={onOpenTagManagement}
                 onTagsChange={onTagsChange}
                 canBindOrUnbindTags={canManageSnippet}
@@ -187,14 +187,7 @@ const SnippetCard = ({
             </div>
           </div>
           {canShowOperations && (
-            <div
-              className={cn(
-                'absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center transition-opacity',
-                isOperationsMenuOpen
-                  ? 'pointer-events-auto opacity-100'
-                  : 'pointer-events-none opacity-0 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100',
-              )}
-            >
+            <div className="pointer-events-none absolute top-1/2 right-1.5 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 has-data-popup-open:pointer-events-auto has-data-popup-open:opacity-100">
               <div className="mx-1 h-3.5 w-px shrink-0 bg-divider-regular" />
               <DropdownMenu
                 modal={false}
@@ -202,25 +195,21 @@ const SnippetCard = ({
                 onOpenChange={setIsOperationsMenuOpen}
               >
                 <DropdownMenuTrigger
-                  aria-label={tCommon(($) => $['operation.more'], { ns: 'common' })}
-                  className="flex size-8 items-center justify-center rounded-md border-none bg-transparent p-2 hover:bg-state-base-hover focus-visible:bg-state-base-hover focus-visible:inset-ring-1 focus-visible:inset-ring-components-input-border-active data-popup-open:bg-state-base-hover data-popup-open:shadow-none"
+                  aria-label={tCommon(($) => $['operation.moreActionsFor'], {
+                    ns: 'common',
+                    name: snippet.name,
+                  })}
+                  className="flex size-8 items-center justify-center rounded-md border-none bg-transparent p-2 hover:bg-state-base-hover focus-visible:bg-state-base-hover data-popup-open:bg-state-base-hover data-popup-open:shadow-none"
                   onClick={(e) => {
                     e.stopPropagation()
                     e.preventDefault()
                   }}
                 >
                   <div className="flex size-8 cursor-pointer items-center justify-center rounded-md">
-                    <span className="sr-only">
-                      {tCommon(($) => $['operation.more'], { ns: 'common' })}
-                    </span>
                     <span aria-hidden className="i-ri-more-fill size-4 text-text-tertiary" />
                   </div>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  placement="bottom-end"
-                  sideOffset={4}
-                  popupClassName="w-[216px]"
-                >
+                <DropdownMenuContent placement="bottom-end" sideOffset={4} className="w-54">
                   {canCreateAndModifySnippet && (
                     <>
                       <DropdownMenuItem className="gap-2 px-3" onClick={handleOpenEditDialog}>
@@ -279,7 +268,7 @@ const SnippetCard = ({
               {t(($) => $.deleteConfirmContent)}
             </AlertDialogDescription>
           </div>
-          <AlertDialogActions className="pt-0">
+          <AlertDialogFooter className="pt-0">
             <AlertDialogCancelButton disabled={deleteSnippetMutation.isPending}>
               {tCommon(($) => $['operation.cancel'], { ns: 'common' })}
             </AlertDialogCancelButton>
@@ -289,7 +278,7 @@ const SnippetCard = ({
             >
               {t(($) => $['menu.deleteSnippet'])}
             </AlertDialogConfirmButton>
-          </AlertDialogActions>
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>

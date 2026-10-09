@@ -76,7 +76,7 @@ function LinkPreviewDemo() {
 
       <PreviewCard handle={previewCardHandle}>
         {({ payload = typographyPreviewPayload }) => (
-          <PreviewCardContent popupClassName="w-[240px] p-2">
+          <PreviewCardContent className="w-60 p-2">
             <div className="flex flex-col gap-2">
               <img
                 width="224"
@@ -126,7 +126,7 @@ const PLACEMENTS: PreviewCardPlacement[] = [
   'left-end',
 ]
 
-const PlacementsDemo = () => {
+function PlacementsDemo() {
   const [placement, setPlacement] = React.useState<PreviewCardPlacement>('bottom')
 
   return (
@@ -149,7 +149,7 @@ const PlacementsDemo = () => {
         <PreviewCardTrigger href="#preview-card-placement" className={triggerButtonClassName}>
           Hover me
         </PreviewCardTrigger>
-        <PreviewCardContent placement={placement} popupClassName="w-56 p-3">
+        <PreviewCardContent placement={placement} className="w-56 p-3">
           <div className="flex flex-col gap-1">
             <div className="text-sm font-semibold text-text-primary">
               placement="
@@ -172,27 +172,29 @@ export const Placements: Story = {
   render: () => <PlacementsDemo />,
 }
 
-const CustomDelayDemo = () => (
-  <PreviewCard>
-    <PreviewCardTrigger
-      delay={100}
-      closeDelay={100}
-      href="#preview-card-delay"
-      className={triggerButtonClassName}
-    >
-      Snappy trigger
-    </PreviewCardTrigger>
-    <PreviewCardContent popupClassName="w-64 p-3">
-      <div className="flex flex-col gap-1">
-        <div className="text-sm font-semibold text-text-primary">Fast hover</div>
-        <div className="text-xs text-text-secondary">
-          Base UI defaults (600ms / 300ms) are tuned for link previews. Override per trigger for
-          denser UIs.
+function CustomDelayDemo() {
+  return (
+    <PreviewCard>
+      <PreviewCardTrigger
+        delay={100}
+        closeDelay={100}
+        href="#preview-card-delay"
+        className={triggerButtonClassName}
+      >
+        Snappy trigger
+      </PreviewCardTrigger>
+      <PreviewCardContent className="w-64 p-3">
+        <div className="flex flex-col gap-1">
+          <div className="text-sm font-semibold text-text-primary">Fast hover</div>
+          <div className="text-xs text-text-secondary">
+            Base UI defaults (600ms / 300ms) are tuned for link previews. Override per trigger for
+            denser UIs.
+          </div>
         </div>
-      </div>
-    </PreviewCardContent>
-  </PreviewCard>
-)
+      </PreviewCardContent>
+    </PreviewCard>
+  )
+}
 
 export const CustomDelays: Story = {
   render: () => <CustomDelayDemo />,

@@ -14,6 +14,23 @@ describe('ShareQRCode', () => {
     vi.clearAllMocks()
   })
 
+  it('uses caller-provided labels instead of App-specific defaults', async () => {
+    const user = userEvent.setup()
+    render(
+      <ShareQRCode
+        content={content}
+        triggerLabel="Show QR code"
+        scanLabel="Scan to share"
+        downloadLabel="Download QR code"
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Show QR code' }))
+
+    expect(screen.getByText('Scan to share')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download QR code' })).toBeInTheDocument()
+  })
+
   describe('Rendering', () => {
     it('renders correctly', () => {
       render(<ShareQRCode content={content} />)
@@ -32,12 +49,22 @@ describe('ShareQRCode', () => {
       const trigger = screen.getByRole('button', {
         name: 'appOverview.overview.appInfo.qrcode.title',
       })
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(trigger).not.toHaveAttribute('aria-controls')
       await user.click(trigger)
 
       expect(screen.getByRole('img')).toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'true')
+      expect(trigger).toHaveAttribute('aria-controls', screen.getByRole('img').parentElement?.id)
+      expect(
+        screen.getByRole('button', { name: 'appOverview.overview.appInfo.qrcode.download' }),
+      ).toBeInTheDocument()
+      expect(screen.queryByText('appOverview.overview.appInfo.qrcode.scan')).not.toBeInTheDocument()
 
       await user.click(trigger)
       expect(screen.queryByRole('img')).not.toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(trigger).not.toHaveAttribute('aria-controls')
     })
 
     it('closes panel when clicking outside', async () => {
@@ -75,23 +102,21 @@ describe('ShareQRCode', () => {
       expect(canvas).toBeInTheDocument()
     })
 
-    it('lets panel interactions bubble without closing the panel', async () => {
+    it('closes with Escape and restores focus to the trigger', async () => {
       const user = userEvent.setup()
-      const onClick = vi.fn()
-      const { container } = render(<ShareQRCode content={content} />)
-      container.addEventListener('click', onClick)
+      render(<ShareQRCode content={content} />)
 
-      await user.click(
-        screen.getByRole('button', {
-          name: 'appOverview.overview.appInfo.qrcode.title',
-        }),
-      )
-      onClick.mockClear()
-
-      await user.click(screen.getByText('appOverview.overview.appInfo.qrcode.scan'))
-
-      expect(onClick).toHaveBeenCalledOnce()
+      const trigger = screen.getByRole('button', {
+        name: 'appOverview.overview.appInfo.qrcode.title',
+      })
+      await user.click(trigger)
       expect(screen.getByRole('img')).toBeInTheDocument()
+
+      await user.keyboard('{Escape}')
+
+      expect(screen.queryByRole('img')).not.toBeInTheDocument()
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(trigger).toHaveFocus()
     })
 
     it('calls downloadUrl when clicking download', async () => {
@@ -147,22 +172,6 @@ describe('ShareQRCode', () => {
       } finally {
         panel.querySelector = origQuerySelector
       }
-    })
-
-    it('does not close when clicking inside the qrcode ref area', async () => {
-      const user = userEvent.setup()
-      render(<ShareQRCode content={content} />)
-
-      const trigger = screen.getByRole('button', {
-        name: 'appOverview.overview.appInfo.qrcode.title',
-      })
-      await user.click(trigger)
-
-      // Click on the scan text inside the panel — panel should remain open
-      const scanText = screen.getByText('appOverview.overview.appInfo.qrcode.scan')
-      await user.click(scanText)
-
-      expect(screen.getByRole('img')).toBeInTheDocument()
     })
   })
 })

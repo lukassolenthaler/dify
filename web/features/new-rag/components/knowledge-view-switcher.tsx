@@ -21,7 +21,7 @@ export type KnowledgeViewSwitcherProps = {
 }
 
 export function KnowledgeViewSwitcher({ value, onChange }: KnowledgeViewSwitcherProps) {
-  const { t } = useTranslation('dataset')
+  const { t } = useTranslation(['dataset'])
   const docLink = useDocLink()
   const guideDismissed = useNewKnowledgeGuideDismissedValue()
   const setGuideDismissed = useSetNewKnowledgeGuideDismissed()
@@ -60,7 +60,7 @@ export function KnowledgeViewSwitcher({ value, onChange }: KnowledgeViewSwitcher
           render={
             <button
               type="button"
-              className="absolute top-1.25 right-1 z-10 flex size-3.5 items-center justify-center rounded-sm text-text-tertiary outline-hidden hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-state-accent-solid"
+              className="absolute top-1.25 right-1 z-10 flex size-3.5 items-center justify-center rounded-sm text-text-tertiary hover:text-text-secondary"
             >
               <span aria-hidden className="i-ri-question-line size-3.5" />
             </button>
@@ -69,7 +69,7 @@ export function KnowledgeViewSwitcher({ value, onChange }: KnowledgeViewSwitcher
         <PopoverContent
           placement="bottom"
           sideOffset={13}
-          className="relative flex max-h-[calc(100dvh-2rem)] min-h-[162px] w-80 max-w-[calc(100vw-2rem)] flex-col"
+          className="relative flex max-h-[calc(100dvh-2rem)] min-h-40.5 w-80 max-w-[calc(100vw-2rem)] flex-col"
         >
           <span
             aria-hidden

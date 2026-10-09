@@ -94,6 +94,8 @@ from services.errors.app import (
     WorkflowHashNotEqualError,
     WorkflowNotFoundError,
 )
+from services.system_feature_service import SystemFeatureService
+from tasks.new_agent_beta_task import register_new_agent_beta_workflow_publish_after_commit
 
 
 @dataclass(frozen=True)
@@ -699,9 +701,7 @@ class WorkflowService:
         )
 
         # Validate credentials before publishing, for credential policy check
-        from services.feature_service import FeatureService
-
-        if FeatureService.is_plugin_manager_enabled():
+        if SystemFeatureService.is_plugin_manager_enabled():
             self._validate_workflow_credentials(draft_workflow, session=session)
 
         # validate graph structure
@@ -748,11 +748,17 @@ class WorkflowService:
 
         # commit db session changes
         session.add(workflow)
-        WorkflowAgentPublishService.copy_agent_node_bindings_to_published(
+        has_inline_agent = WorkflowAgentPublishService.copy_agent_node_bindings_to_published(
             session=session,
             draft_workflow=draft_workflow,
             published_workflow=workflow,
         )
+        if has_inline_agent:
+            register_new_agent_beta_workflow_publish_after_commit(
+                session=session,
+                published_workflow_id=workflow.id,
+                published_at=workflow.created_at,
+            )
 
         # trigger app workflow events
         app_published_workflow_was_updated.send(app_model, published_workflow=workflow)
@@ -1636,7 +1642,7 @@ class WorkflowService:
         self,
         invoke_node_fn: Callable[
             [],
-            tuple[Node, Generator[GraphNodeEventBase | ContainerAwaitRequest, None, None]],
+            tuple[Node, Generator[GraphNodeEventBase | ContainerAwaitRequest]],
         ],
         start_at: float,
         node_id: str,
@@ -1676,7 +1682,7 @@ class WorkflowService:
         self,
         invoke_node_fn: Callable[
             [],
-            tuple[Node, Generator[GraphNodeEventBase | ContainerAwaitRequest, None, None]],
+            tuple[Node, Generator[GraphNodeEventBase | ContainerAwaitRequest]],
         ],
     ) -> tuple[Node, NodeRunResult | None, bool, str | None]:
         """

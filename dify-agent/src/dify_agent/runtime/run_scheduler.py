@@ -24,7 +24,12 @@ from agenton.compositor import CompositorSessionSnapshot, LayerProviderInput
 from dify_agent.protocol.schemas import AgentRunUsage, CancelRunRequest, CancelRunResponse, CreateRunRequest, RunStatus
 from dify_agent.runtime.cancellation import RunCancellationIntent
 from dify_agent.runtime.compositor_factory import create_default_layer_providers
+from dify_agent.runtime.event_coalescer import (
+    DEFAULT_TEXT_DELTA_FLUSH_INTERVAL_SECONDS,
+    DEFAULT_TEXT_DELTA_MAX_CHARS,
+)
 from dify_agent.runtime.event_sink import RunEventSink, RunFinalizationResult, emit_run_failed
+from dify_agent.runtime.observability import AgentObservability
 from dify_agent.runtime.runner import DEFAULT_AGENT_RUN_TIMEOUT_SECONDS, AgentRunRunner
 from dify_agent.server.schemas import RunRecord
 
@@ -106,12 +111,16 @@ class RunScheduler:
     store: RunStore
     shutdown_grace_seconds: float
     run_timeout_seconds: float
+    stream_text_delta_coalescing_enabled: bool
+    stream_text_delta_flush_interval_seconds: float
+    stream_text_delta_max_chars: int
     active_tasks: dict[str, asyncio.Task[None]]
     stopping: bool
     runner_factory: RunRunnerFactory | None
     layer_providers: tuple[LayerProviderInput, ...]
     plugin_daemon_http_client: httpx.AsyncClient
     dify_api_http_client: httpx.AsyncClient
+    agent_observability: AgentObservability | None
     _lifecycle_lock: asyncio.Lock
 
     def __init__(
@@ -122,18 +131,26 @@ class RunScheduler:
         dify_api_http_client: httpx.AsyncClient,
         shutdown_grace_seconds: float = 30,
         run_timeout_seconds: float = DEFAULT_AGENT_RUN_TIMEOUT_SECONDS,
+        stream_text_delta_coalescing_enabled: bool = True,
+        stream_text_delta_flush_interval_seconds: float = DEFAULT_TEXT_DELTA_FLUSH_INTERVAL_SECONDS,
+        stream_text_delta_max_chars: int = DEFAULT_TEXT_DELTA_MAX_CHARS,
         layer_providers: tuple[LayerProviderInput, ...] | None = None,
         runner_factory: RunRunnerFactory | None = None,
+        agent_observability: AgentObservability | None = None,
     ) -> None:
         self.store = store
         self.shutdown_grace_seconds = shutdown_grace_seconds
         self.run_timeout_seconds = run_timeout_seconds
+        self.stream_text_delta_coalescing_enabled = stream_text_delta_coalescing_enabled
+        self.stream_text_delta_flush_interval_seconds = stream_text_delta_flush_interval_seconds
+        self.stream_text_delta_max_chars = stream_text_delta_max_chars
         self.active_tasks = {}
         self.stopping = False
         self.plugin_daemon_http_client = plugin_daemon_http_client
         self.dify_api_http_client = dify_api_http_client
         self.layer_providers = layer_providers if layer_providers is not None else create_default_layer_providers()
         self.runner_factory = runner_factory
+        self.agent_observability = agent_observability
         self._lifecycle_lock = asyncio.Lock()
 
     async def create_run(self, request: CreateRunRequest) -> RunRecord:
@@ -304,6 +321,10 @@ class RunScheduler:
             layer_providers=self.layer_providers,
             is_cancelled=is_cancelled,
             run_timeout_seconds=self.run_timeout_seconds,
+            stream_text_delta_coalescing_enabled=self.stream_text_delta_coalescing_enabled,
+            stream_text_delta_flush_interval_seconds=self.stream_text_delta_flush_interval_seconds,
+            stream_text_delta_max_chars=self.stream_text_delta_max_chars,
+            agent_observability=self.agent_observability,
         )
 
     def _discard_active_run(self, run_id: str) -> None:

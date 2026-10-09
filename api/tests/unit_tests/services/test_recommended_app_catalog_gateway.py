@@ -18,6 +18,7 @@ from services.recommended_app_query_service import (
     RecommendedAppInfoRecord,
     RecommendedAppRecord,
 )
+from tests.unit_tests.config_override import apply_config_overrides
 
 
 def _page_payload(*app_ids: str, learn_dify_ids: frozenset[str] = frozenset()) -> dict[str, object]:
@@ -57,6 +58,21 @@ def _detail_payload() -> dict[str, object]:
         "mode": "chat",
         "export_data": "{}",
     }
+
+
+def test_agent_template_accepts_package_url_without_yaml() -> None:
+    source = {**_detail_payload(), "mode": "agent", "package_url": "https://templates.example/agent.ifpkg"}
+    source.pop("export_data")
+    detail = gateway_module._map_detail(source)
+    assert detail.package_url == "https://templates.example/agent.ifpkg"
+    assert detail.export_data == ""
+
+
+def test_non_agent_template_still_requires_yaml() -> None:
+    source = _detail_payload()
+    source.pop("export_data")
+    with pytest.raises(KeyError):
+        gateway_module._map_detail(source)
 
 
 def _expected_page(*, categories: tuple[str, ...] = ("Workflow",)) -> RecommendedAppCatalogPage:
@@ -224,7 +240,7 @@ class TestRemoteRecommendedAppCatalogGateway:
     @pytest.fixture(autouse=True)
     def _use_remote_mode(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         gateway_module.clear_remote_fetch_cache()
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_MODE", "remote")
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_MODE="remote")
         yield
         gateway_module.clear_remote_fetch_cache()
 
@@ -445,12 +461,11 @@ class TestRemoteRecommendedAppCatalogGateway:
         response.json.return_value = _detail_payload()
         http_get = MagicMock(return_value=response)
         monkeypatch.setattr(gateway_module.httpx, "get", http_get)
-        monkeypatch.setattr(
-            gateway_module.dify_config,
-            "HOSTED_FETCH_APP_TEMPLATES_REMOTE_DOMAIN",
-            "https://catalog.example.com",
+        apply_config_overrides(
+            monkeypatch,
+            HOSTED_FETCH_APP_TEMPLATES_REMOTE_DOMAIN="https://catalog.example.com",
+            CONSOLE_WEB_URL="https://console.example.com",
         )
-        monkeypatch.setattr(gateway_module.dify_config, "CONSOLE_WEB_URL", "https://console.example.com")
         gateway = RemoteRecommendedAppCatalogGateway()
         gateway.get_detail("app-1")
 
@@ -466,12 +481,11 @@ class TestRemoteRecommendedAppCatalogGateway:
         response.json.return_value = _page_payload()
         http_get = MagicMock(return_value=response)
         monkeypatch.setattr(gateway_module.httpx, "get", http_get)
-        monkeypatch.setattr(
-            gateway_module.dify_config,
-            "HOSTED_FETCH_APP_TEMPLATES_REMOTE_DOMAIN",
-            "https://catalog.example.com",
+        apply_config_overrides(
+            monkeypatch,
+            HOSTED_FETCH_APP_TEMPLATES_REMOTE_DOMAIN="https://catalog.example.com",
+            HOSTED_FETCH_APP_TEMPLATES_CACHE_TTL=600,
         )
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_CACHE_TTL", 600)
         gateway = RemoteRecommendedAppCatalogGateway()
 
         assert gateway.list_recommended("en-US") == _expected_page()
@@ -482,7 +496,7 @@ class TestRemoteRecommendedAppCatalogGateway:
         response = MagicMock(status_code=500)
         http_get = MagicMock(return_value=response)
         monkeypatch.setattr(gateway_module.httpx, "get", http_get)
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_CACHE_TTL", 600)
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_CACHE_TTL=600)
         expected_page = _expected_page()
         fallback = MagicMock()
         fallback.list_recommended.return_value = expected_page
@@ -501,7 +515,7 @@ class TestRemoteRecommendedAppCatalogGateway:
         response.json.return_value = _page_payload()
         http_get = MagicMock(return_value=response)
         monkeypatch.setattr(gateway_module.httpx, "get", http_get)
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_CACHE_TTL", 0)
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_CACHE_TTL=0)
         gateway = RemoteRecommendedAppCatalogGateway()
 
         gateway.list_recommended("en-US")
@@ -516,11 +530,11 @@ class TestRemoteRecommendedAppCatalogGateway:
         response.json.return_value = _page_payload()
         http_get = MagicMock(return_value=response)
         monkeypatch.setattr(gateway_module.httpx, "get", http_get)
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_CACHE_TTL", 600)
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_CACHE_TTL=600)
         gateway = RemoteRecommendedAppCatalogGateway()
-        monkeypatch.setattr(gateway_module.dify_config, "CONSOLE_WEB_URL", "https://cloud-a.example.com")
+        apply_config_overrides(monkeypatch, CONSOLE_WEB_URL="https://cloud-a.example.com")
         gateway.list_recommended("en-US")
-        monkeypatch.setattr(gateway_module.dify_config, "CONSOLE_WEB_URL", "https://cloud-b.example.com")
+        apply_config_overrides(monkeypatch, CONSOLE_WEB_URL="https://cloud-b.example.com")
         gateway.list_recommended("en-US")
 
         assert http_get.call_count == 2
@@ -543,7 +557,7 @@ class TestRemoteRecommendedAppCatalogGateway:
         response.json.return_value = _detail_payload()
         http_get = MagicMock(return_value=response)
         monkeypatch.setattr(gateway_module.httpx, "get", http_get)
-        monkeypatch.setattr(gateway_module.dify_config, "CONSOLE_WEB_URL", console_web_url)
+        apply_config_overrides(monkeypatch, CONSOLE_WEB_URL=console_web_url)
         gateway = RemoteRecommendedAppCatalogGateway()
         gateway.get_detail("app-1")
 
@@ -565,10 +579,9 @@ class TestRemoteRecommendedAppCatalogGateway:
         response = MagicMock(status_code=500)
         http_get = MagicMock(return_value=response)
         monkeypatch.setattr(gateway_module.httpx, "get", http_get)
-        monkeypatch.setattr(
-            gateway_module.dify_config,
-            "HOSTED_FETCH_APP_TEMPLATES_REMOTE_DOMAIN",
-            "https://catalog.example.com",
+        apply_config_overrides(
+            monkeypatch,
+            HOSTED_FETCH_APP_TEMPLATES_REMOTE_DOMAIN="https://catalog.example.com",
         )
         fallback = MagicMock()
         database = MagicMock()
@@ -603,7 +616,7 @@ class TestRecommendedAppCatalogRouter:
             database=MagicMock(),
             builtin=builtin,
         )
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_MODE", "remote")
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_MODE="remote")
 
         assert gateway.list_recommended("ja-JP") == expected_page
         remote.list_recommended.assert_called_once_with("ja-JP")
@@ -619,13 +632,13 @@ class TestRecommendedAppCatalogRouter:
             builtin=builtin,
         )
 
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_MODE", "remote")
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_MODE="remote")
         gateway.list_recommended("en-US")
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_MODE", "db")
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_MODE="db")
         gateway.list_learn_dify("en-US")
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_MODE", "builtin")
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_MODE="builtin")
         gateway.get_detail("app-1")
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_MODE", "remote")
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_MODE="remote")
         gateway.contains("app-1")
 
         remote.list_recommended.assert_called_once_with("en-US")
@@ -643,7 +656,7 @@ class TestRecommendedAppCatalogRouter:
             database=database,
             builtin=builtin,
         )
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_MODE", "builtin")
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_MODE="builtin")
 
         assert gateway.list_learn_dify("en-US") == expected_page
         builtin.list_learn_dify.assert_called_once_with("en-US")
@@ -655,7 +668,7 @@ class TestRecommendedAppCatalogRouter:
             database=MagicMock(),
             builtin=MagicMock(),
         )
-        monkeypatch.setattr(gateway_module.dify_config, "HOSTED_FETCH_APP_TEMPLATES_MODE", "invalid")
+        apply_config_overrides(monkeypatch, HOSTED_FETCH_APP_TEMPLATES_MODE="invalid")
 
         with pytest.raises(ValueError, match="invalid fetch recommended apps mode: invalid"):
             gateway.list_recommended("en-US")

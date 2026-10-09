@@ -7,7 +7,7 @@ import struct
 import subprocess
 import time
 import uuid
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping
 from datetime import datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING, Annotated, Any, Protocol, cast, overload, override
@@ -208,9 +208,13 @@ def to_timestamp(value: datetime | int | None) -> int | None:
     return value
 
 
-def dump_response(model: type[BaseModel], data: Any) -> dict[str, Any]:
-    """Serialize a Pydantic response model to JSON-compatible dict output."""
-    return model.model_validate(data, from_attributes=True).model_dump(mode="json")
+def dump_response(model: type[BaseModel], data: Any, **dump_kwargs: Any) -> dict[str, Any]:
+    """Serialize a Pydantic response model to JSON-compatible dict output.
+
+    Extra keyword arguments are forwarded to ``model_dump`` (e.g. ``include=...``,
+    ``exclude=...``, ``exclude_unset=True``).
+    """
+    return model.model_validate(data, from_attributes=True).model_dump(mode="json", **dump_kwargs)
 
 
 def current_timestamp() -> int:
@@ -410,7 +414,7 @@ def generate_text_hash(text: str) -> str:
 
 
 def compact_generate_response(
-    response: Mapping[str, Any] | Generator[str, None, None] | RateLimitGenerator,
+    response: Mapping[str, Any] | Iterable[str],
 ) -> Response:
     if isinstance(response, Mapping):
         return Response(
@@ -421,7 +425,7 @@ def compact_generate_response(
     else:
         stream_response = response
 
-        def generate() -> Generator[str, None, None]:
+        def generate() -> Generator[str]:
             yield from stream_response
 
         return Response(
@@ -433,7 +437,7 @@ def compact_generate_response(
 
 def length_prefixed_response(
     magic_number: int,
-    response: Mapping[str, Any] | BaseModel | Generator[str | bytes, None, None] | RateLimitGenerator,
+    response: Mapping[str, Any] | BaseModel | Generator[str | bytes] | RateLimitGenerator,
 ) -> Response:
     """
     This function is used to return a response with a length prefix.
@@ -481,7 +485,7 @@ def length_prefixed_response(
 
     stream_response = response
 
-    def generate() -> Generator[bytes, None, None]:
+    def generate() -> Generator[bytes]:
         for chunk in stream_response:
             if isinstance(chunk, str):
                 yield pack_response_with_length_prefix(chunk.encode("utf-8"))

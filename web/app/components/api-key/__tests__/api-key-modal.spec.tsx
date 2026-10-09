@@ -25,7 +25,7 @@ const apiMocks = vi.hoisted(() => ({
   deleteEnvironment: vi.fn(),
 }))
 
-vi.mock('@/service/client', () => ({
+vi.mock('@/service/console', () => ({
   consoleQuery: {
     apps: {
       byResourceId: {
@@ -70,7 +70,7 @@ vi.mock('@/service/client', () => ({
         },
         post: {
           mutationOptions: () => ({
-            mutationFn: () => apiMocks.createDataset(),
+            mutationFn: (variables: unknown) => apiMocks.createDataset(variables),
           }),
         },
         byApiKeyId: {
@@ -113,6 +113,21 @@ vi.mock('@/service/client', () => ({
   },
 }))
 
+vi.mock('@/service/knowledge/use-dataset', () => ({
+  useInfiniteDatasets: ({ keyword = '' }: { keyword?: string }) => ({
+    data: {
+      pages: [
+        {
+          data: [
+            { id: 'engineering', name: 'Engineering' },
+            { id: 'support', name: 'Support' },
+          ].filter((dataset) => dataset.name.toLowerCase().includes(keyword.toLowerCase())),
+        },
+      ],
+    },
+  }),
+}))
+
 const mockCurrentWorkspace = vi.fn().mockReturnValue({
   id: 'workspace-1',
   name: 'Test Workspace',
@@ -123,7 +138,6 @@ vi.mock('@/context/workspace-state', async () => {
   return createWorkspaceStateModuleMock(() => ({
     currentWorkspace: mockCurrentWorkspace(),
     isCurrentWorkspaceManager: true,
-    isCurrentWorkspaceEditor: true,
   }))
 })
 
@@ -231,6 +245,12 @@ describe('ApiKeyModal', () => {
 
     expect(await screen.findByText('dat...cret-token-123456789')).toBeInTheDocument()
     expect(apiMocks.listDataset).toHaveBeenCalled()
+    // Dataset keys surface their knowledge-base scope; a key without dataset_ids reads
+    // as scoped to all knowledge bases.
+    expect(
+      screen.getByRole('columnheader', { name: 'appApi.apiKeyModal.scope' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('appApi.apiKeyModal.scopeAllDatasets')).toBeInTheDocument()
   })
 
   it('creates an app API key through the generated mutation input', async () => {
@@ -249,14 +269,18 @@ describe('ApiKeyModal', () => {
     ).toHaveValue('new-app-token-123')
   })
 
-  it('creates a dataset API key through the generated mutation', async () => {
+  it('creates a workspace dataset API key scoped to all knowledge bases', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
     await renderModal(datasetScope)
 
     await user.click(screen.getByText('appApi.apiKeyModal.createNewSecretKey'))
 
+    // Dataset creation first opens the scope dialog; the default "all" scope creates a
+    // key with an empty dataset_ids list.
+    await user.click(await screen.findByRole('button', { name: 'common.operation.create' }))
+
     await waitFor(() => {
-      expect(apiMocks.createDataset).toHaveBeenCalledWith()
+      expect(apiMocks.createDataset).toHaveBeenCalledWith({ body: { dataset_ids: [] } })
     })
     expect(
       await screen.findByRole('textbox', { name: 'appApi.apiKeyModal.secretKey' }),
@@ -288,6 +312,41 @@ describe('ApiKeyModal', () => {
         params: { resource_id: 'app-123', api_key_id: 'app-key-1' },
       })
     })
+  })
+
+  it('searches for a knowledge base and creates a key scoped to the selection', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await renderModal(datasetScope)
+
+    await user.click(screen.getByText('appApi.apiKeyModal.createNewSecretKey'))
+    await user.click(await screen.findByRole('radio', { name: /scopeSpecificDatasets/ }))
+    expect(screen.getByRole('button', { name: 'common.operation.create' })).toBeDisabled()
+    await user.click(screen.getByRole('combobox', { name: 'appApi.apiKeyModal.addKnowledgeBase' }))
+    await user.type(
+      await screen.findByRole('combobox', { name: 'appApi.apiKeyModal.searchKnowledgeBases' }),
+      'engineering',
+    )
+
+    expect(screen.queryByRole('option', { name: 'Support' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'Engineering' }))
+    expect(screen.getByRole('option', { name: 'Engineering' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(
+      screen.getByRole('combobox', { name: 'appApi.apiKeyModal.searchKnowledgeBases' }),
+    ).toHaveValue('engineering')
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: 'common.operation.create' }))
+
+    await waitFor(() => {
+      expect(apiMocks.createDataset).toHaveBeenCalledWith({
+        body: { dataset_ids: ['engineering'] },
+      })
+    })
+    expect(
+      await screen.findByRole('textbox', { name: 'appApi.apiKeyModal.secretKey' }),
+    ).toHaveValue('new-dataset-token-123')
   })
 
   it('deletes a dataset API key through the generated mutation input', async () => {

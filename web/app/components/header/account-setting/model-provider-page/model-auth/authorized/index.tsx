@@ -1,4 +1,4 @@
-import type { Placement } from '@langgenius/dify-ui/popover'
+import type { PopoverContentProps } from '@langgenius/dify-ui/popover'
 import type { MouseEvent } from 'react'
 import type {
   ConfigurationMethodEnum,
@@ -10,10 +10,10 @@ import type {
 } from '../../declarations'
 import {
   AlertDialog,
-  AlertDialogActions,
   AlertDialogCancelButton,
   AlertDialogConfirmButton,
   AlertDialogContent,
+  AlertDialogFooter,
   AlertDialogTitle,
 } from '@langgenius/dify-ui/alert-dialog'
 import { Button } from '@langgenius/dify-ui/button'
@@ -31,7 +31,7 @@ type PopoverOffsetOptions = {
   alignmentAxis?: number
 }
 
-type AuthorizedProps = {
+type AuthorizedProps = Pick<PopoverContentProps, 'placement'> & {
   provider: ModelProvider
   configurationMethod: ConfigurationMethodEnum
   currentCustomConfigurationModelFixedFields?: CustomConfigurationModelFixedFields
@@ -52,7 +52,6 @@ type AuthorizedProps = {
   isOpen?: boolean
   onOpenChange?: (open: boolean) => void
   offset?: number | PopoverOffsetOptions
-  placement?: Placement
   popupClassName?: string
   showItemSelectedIcon?: boolean
   onItemClick?: (credential: Credential, model?: CustomModel) => void
@@ -88,7 +87,7 @@ const Authorized = ({
   disableDeleteButShowAction,
   disableDeleteTip,
 }: AuthorizedProps) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'modelProvider'])
   const { canUseCredential, canCreateCredential, canManageCredential } = useCredentialPermissions()
   const [isLocalOpen, setIsLocalOpen] = useState(false)
   const mergedIsOpen = isOpen ?? isLocalOpen
@@ -248,7 +247,7 @@ const Authorized = ({
                   className="flex h-10 cursor-pointer items-center px-3 system-xs-medium text-text-accent-light-mode-only"
                 >
                   <span className="mr-1 i-ri-add-line size-4" />
-                  {t(($) => $['modelProvider.auth.addModelCredential'], { ns: 'common' })}
+                  {t(($) => $['modelProvider.auth.addModelCredential'], { ns: 'modelProvider' })}
                 </div>
               )}
             {!isModelCredential &&
@@ -257,7 +256,7 @@ const Authorized = ({
               canCreateCredential && (
                 <div className="p-2">
                   <Button onClick={() => handleEdit()} className="w-full">
-                    {t(($) => $['modelProvider.auth.addApiKey'], { ns: 'common' })}
+                    {t(($) => $['modelProvider.auth.addApiKey'], { ns: 'modelProvider' })}
                   </Button>
                 </div>
               )}
@@ -271,17 +270,17 @@ const Authorized = ({
         <AlertDialogContent>
           <div className="flex flex-col gap-2 px-6 pt-6 pb-4">
             <AlertDialogTitle className="w-full truncate title-2xl-semi-bold text-text-primary">
-              {t(($) => $['modelProvider.confirmDelete'], { ns: 'common' })}
+              {t(($) => $['modelProvider.confirmDelete'], { ns: 'modelProvider' })}
             </AlertDialogTitle>
           </div>
-          <AlertDialogActions>
+          <AlertDialogFooter>
             <AlertDialogCancelButton>
               {t(($) => $['operation.cancel'], { ns: 'common' })}
             </AlertDialogCancelButton>
             <AlertDialogConfirmButton disabled={doingAction} onClick={handleConfirmDelete}>
               {t(($) => $['operation.confirm'], { ns: 'common' })}
             </AlertDialogConfirmButton>
-          </AlertDialogActions>
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>

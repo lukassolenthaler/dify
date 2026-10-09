@@ -1,34 +1,38 @@
 'use client'
 
-import type { AccessPointAppInfo, PublishedWorkflow } from '../shared/utils'
+import type { AppDetailWithSite } from '@dify/contracts/api/console/apps/types.gen'
+import type { PublishedWorkflow } from '../shared/utils'
 import {
   AlertDialog,
-  AlertDialogActions,
   AlertDialogCancelButton,
   AlertDialogConfirmButton,
   AlertDialogContent,
   AlertDialogDescription,
+  AlertDialogFooter,
   AlertDialogTitle,
 } from '@langgenius/dify-ui/alert-dialog'
 import { Button } from '@langgenius/dify-ui/button'
+import { useMutation } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { AccessPointCard } from '@/app/components/base/access-point/card'
+import { AccessPointUrl } from '@/app/components/base/access-point/url'
 import MCPServerModal from '@/app/components/tools/mcp/mcp-server-modal'
 import { BlockEnum } from '@/app/components/workflow/types'
+import { toast } from '@/app/notifications'
+import { consoleQuery } from '@/service/console'
 import {
   useInvalidateMCPServerDetail,
   useMCPServerDetail,
   useRefreshMCPServerCode,
-  useUpdateMCPServer,
 } from '@/service/use-tools'
 import { AppModeEnum } from '@/types/app'
-import { AccessPointCard } from '../shared/access-point-card'
-import { AccessPointUrl } from '../shared/access-point-url'
+import { useAccessPointStatusLabel } from '../shared/use-access-point-status-label'
 import { getPublishedWorkflowNodes, isAdvancedApp } from '../shared/utils'
 
 type MCPAccessPointCardProps = {
-  appInfo: AccessPointAppInfo
-  canEdit: boolean
+  appInfo: AppDetailWithSite
+  canManageAccessPoint: boolean
   highlighted?: boolean
   triggerModeDisabled: boolean
   workflow: PublishedWorkflow
@@ -37,32 +41,45 @@ type MCPAccessPointCardProps = {
 
 export function MCPAccessPointCard({
   appInfo,
-  canEdit,
+  canManageAccessPoint,
   highlighted,
   triggerModeDisabled,
   workflow,
   workflowLoading,
 }: MCPAccessPointCardProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['appOverview', 'common', 'deployments', 'tools'])
   const advancedApp = isAdvancedApp(appInfo)
   const basicApp = !advancedApp
   const workflowApp = appInfo.mode === AppModeEnum.WORKFLOW
   const [showServerModal, setShowServerModal] = useState(false)
   const [showRegenerate, setShowRegenerate] = useState(false)
-  const [pendingStatus, setPendingStatus] = useState<boolean | null>(null)
   const basicConfig = appInfo.model_config
   const basicAppInputForm = basicConfig?.user_input_form
   const { data: detail, isPending: serverDetailLoading } = useMCPServerDetail(
     appInfo.id,
     Boolean(appInfo.id),
   )
-  const { mutateAsync: updateServer, isPending: statusUpdating } = useUpdateMCPServer()
-  const { mutateAsync: refreshServerCode, isPending: regenerating } = useRefreshMCPServerCode()
   const invalidateServerDetail = useInvalidateMCPServerDetail()
+  const updateServerMutation = useMutation(
+    consoleQuery.apps.byAppId.server.put.mutationOptions({
+      scope: {
+        id: `app-mcp-toggle:${appInfo.id}`,
+      },
+      onSuccess: () => invalidateServerDetail(appInfo.id),
+      onError: () => {
+        toast.error(t(($) => $['actionMsg.modifiedUnsuccessfully'], { ns: 'common' }))
+      },
+    }),
+  )
+  const { mutateAsync: refreshServerCode, isPending: regenerating } = useRefreshMCPServerCode()
 
   const serverPublished = Boolean(detail?.id)
   const serverActivated = detail?.status === 'active'
-  const activated = pendingStatus ?? serverActivated
+  const pendingStatus = updateServerMutation.variables?.body.status
+  const activated =
+    updateServerMutation.isPending && pendingStatus != null
+      ? pendingStatus === 'active'
+      : serverActivated
   const serverUrl = serverPublished
     ? `${appInfo.api_base_url.replace(/\/v1$/, '')}/mcp/server/${detail?.server_code}/mcp`
     : '***********'
@@ -98,30 +115,28 @@ export function MCPAccessPointCard({
     )
   }, [advancedApp, basicAppInputs, workflowNodes])
 
-  const handleStatusChange = async (enabled: boolean) => {
-    if (!canEdit || loading || unavailable) return
+  const handleStatusChange = (enabled: boolean) => {
+    if (!canManageAccessPoint || loading || unavailable) return
     if (enabled && !serverPublished) {
       setShowServerModal(true)
       return
     }
 
-    setPendingStatus(enabled)
-    try {
-      await updateServer({
-        appID: appInfo.id,
+    updateServerMutation.mutate({
+      params: {
+        app_id: appInfo.id,
+      },
+      body: {
         id: detail?.id || '',
         description: detail?.description || '',
         parameters: detail?.parameters || {},
         status: enabled ? 'active' : 'inactive',
-      })
-      invalidateServerDetail(appInfo.id)
-    } finally {
-      setPendingStatus(null)
-    }
+      },
+    })
   }
 
   const handleRegenerate = async () => {
-    if (!canEdit || !detail?.id) return
+    if (!canManageAccessPoint || !detail?.id) return
     await refreshServerCode(appInfo.id)
     invalidateServerDetail(appInfo.id)
     setShowRegenerate(false)
@@ -134,6 +149,7 @@ export function MCPAccessPointCard({
       : activated
         ? 'inService'
         : 'disabled'
+  const statusLabel = useAccessPointStatusLabel(status)
 
   return (
     <>
@@ -144,15 +160,15 @@ export function MCPAccessPointCard({
         })}
         icon="i-custom-vender-integrations-mcp"
         status={status}
+        statusLabel={statusLabel}
         highlighted={highlighted}
-        busy={statusUpdating}
-        switchDisabled={!canEdit}
+        switchDisabled={!canManageAccessPoint}
         switchLabel={t(($) => $['mcp.server.title'], { ns: 'tools' })}
         onEnabledChange={loading || unavailable ? undefined : handleStatusChange}
         actions={
           <Button
             variant="secondary"
-            disabled={loading || unavailable || !canEdit}
+            disabled={loading || unavailable || !canManageAccessPoint}
             onClick={() => setShowServerModal(true)}
             className="flex items-center gap-1 px-3"
           >
@@ -177,7 +193,7 @@ export function MCPAccessPointCard({
           regenerateLabel={t(($) => $['overview.appInfo.regenerate'], {
             ns: 'appOverview',
           })}
-          regenerateDisabled={!canEdit || !serverPublished}
+          regenerateDisabled={!canManageAccessPoint || !serverPublished}
           regenerating={regenerating}
           onRegenerate={() => setShowRegenerate(true)}
         />
@@ -191,7 +207,6 @@ export function MCPAccessPointCard({
           latestParams={latestParams}
           onHide={() => {
             setShowServerModal(false)
-            setPendingStatus(null)
             invalidateServerDetail(appInfo.id)
           }}
           appInfo={appInfo}
@@ -208,14 +223,14 @@ export function MCPAccessPointCard({
               {t(($) => $['mcp.server.reGen'], { ns: 'tools' })}
             </AlertDialogDescription>
           </div>
-          <AlertDialogActions>
+          <AlertDialogFooter>
             <AlertDialogCancelButton>
               {t(($) => $['operation.cancel'], { ns: 'common' })}
             </AlertDialogCancelButton>
             <AlertDialogConfirmButton onClick={() => void handleRegenerate()}>
               {t(($) => $['operation.confirm'], { ns: 'common' })}
             </AlertDialogConfirmButton>
-          </AlertDialogActions>
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>

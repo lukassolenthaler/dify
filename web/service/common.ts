@@ -5,7 +5,6 @@ import type {
 } from '@dify/contracts/api/console/workspaces/types.gen'
 import type {
   DefaultModelResponse,
-  Model,
   ModelParameterRule,
   ModelTypeEnum,
 } from '@/app/components/header/account-setting/model-provider-page/declarations'
@@ -61,16 +60,6 @@ export const fetchInitValidateStatus = (): Promise<InitValidateStatusResponse> =
 export const fetchSetupStatus = (): Promise<SetupStatusResponse> => {
   return get<SetupStatusResponse>('/setup')
 }
-export const updateUserProfile = ({
-  url,
-  body,
-}: {
-  url: string
-  body: Record<string, any>
-}): Promise<CommonResponse> => {
-  return post<CommonResponse>(url, { body })
-}
-
 export const deleteMemberOrCancelInvitation = ({
   url,
 }: {
@@ -105,9 +94,6 @@ export const ownershipTransfer = (
     { body },
   )
 
-export const fetchFilePreview = ({ fileID }: { fileID: string }): Promise<{ content: string }> => {
-  return get<{ content: string }>(`/files/${fileID}/preview`)
-}
 export const updateWorkspaceInfo = ({
   url,
   body,
@@ -153,22 +139,8 @@ export const activateMember = ({
   return post<LoginResponse>(url, { body })
 }
 
-export const fetchModelList = (url: string): Promise<{ data: Model[] }> => {
-  return get<{ data: Model[] }>(url)
-}
-
 export const fetchDefaultModal = (url: string): Promise<{ data: DefaultModelResponse }> => {
   return get<{ data: DefaultModelResponse }>(url)
-}
-
-export const updateDefaultModel = ({
-  url,
-  body,
-}: {
-  url: string
-  body: any
-}): Promise<CommonResponse> => {
-  return post<CommonResponse>(url, { body })
 }
 
 export const fetchModelParameterRules = (url: string): Promise<{ data: ModelParameterRule[] }> => {
@@ -335,6 +307,6 @@ export const getAvatar = async ({
 }: {
   avatar: string
 }): Promise<{ avatar_url: string }> => {
-  const { consoleClient } = await import('./client')
+  const { consoleClient } = await import('@/service/console')
   return consoleClient.account.avatar.get({ query: { avatar } })
 }

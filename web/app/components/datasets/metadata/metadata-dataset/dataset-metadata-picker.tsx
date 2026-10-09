@@ -58,7 +58,7 @@ export function DatasetMetadataPicker({
   onCreateMetadata,
   onOpenMetadataManagement,
 }: DatasetMetadataPickerProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['dataset'])
   const { data: datasetMetaData } = useDatasetMetaData(datasetId)
   const metadataItems = datasetMetaData?.doc_metadata ?? []
   const [open, setOpen] = useState(false)
@@ -107,12 +107,7 @@ export function DatasetMetadataPicker({
     <Popover open={open} onOpenChange={setOpen} onOpenChangeComplete={handleOpenChangeComplete}>
       <PopoverTrigger
         render={
-          <Button
-            variant="tertiary"
-            size="small"
-            aria-label={t(($) => $['metadata.addMetadata'], { ns: 'dataset' })}
-            className="w-full px-2 py-0"
-          >
+          <Button variant="tertiary" size="small" className="w-full px-2 py-0">
             <span className="flex min-w-0 items-center justify-center gap-1">
               <span
                 className="i-ri-add-line size-3.5 shrink-0 text-components-button-tertiary-text"
@@ -178,7 +173,7 @@ function MetadataPickerSelectPanel({
   onStartMetadataCreation: () => void
   onOpenMetadataManagement: () => void
 }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'dataset'])
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleClearQuery = () => {
@@ -247,7 +242,7 @@ function MetadataPickerActions({
   onStartMetadataCreation: () => void
   onOpenMetadataManagement: () => void
 }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['dataset'])
 
   return (
     <div className="flex items-center justify-between p-1">

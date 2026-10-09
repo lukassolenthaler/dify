@@ -7,15 +7,22 @@ from uuid import uuid4
 from configs import dify_config
 from context import capture_current_context
 from core.app.apps.exc import GenerateTaskStoppedError
-from core.app.entities.app_invoke_entities import InvokeFrom, UserFrom, build_dify_run_context
+from core.app.entities.app_invoke_entities import (
+    InvokeFrom,
+    UserFrom,
+    build_dify_run_context,
+)
 from core.app.file_access import DatabaseFileAccessController
 from core.app.workflow.layers.observability import ObservabilityLayer
+from core.credit_usage import CreditUsageAppType
+from core.repositories.human_input_repository import HumanInputFormSubmissionRepository
 from core.workflow.node_factory import (
     DifyGraphInitContext,
     DifyNodeFactory,
     is_start_node_type,
     resolve_workflow_node_class,
 )
+from core.workflow.nodes.human_input.boundary import HumanInputFormEventFilter
 from core.workflow.system_variables import (
     default_system_variables,
     get_node_creation_preload_selectors,
@@ -49,7 +56,7 @@ _file_access_controller = DatabaseFileAccessController()
 def iter_dify_graph_engine_events(
     engine: GraphEngine,
     response_stream_filter: ResponseStreamFilter | None = None,
-) -> Generator[GraphEngineEvent, None, None]:
+) -> Generator[GraphEngineEvent]:
     """
     Apply Dify's response streaming compatibility filter to GraphEngine events.
 
@@ -65,7 +72,10 @@ def iter_dify_graph_engine_events(
     yield from filter_graph_events(
         engine.run(),
         context=GraphEventFilterContext.from_engine(engine),
-        filters=[response_stream_filter or ResponseStreamFilter()],
+        filters=[
+            HumanInputFormEventFilter(form_repository=HumanInputFormSubmissionRepository()),
+            response_stream_filter or ResponseStreamFilter(),
+        ],
     )
 
 
@@ -174,7 +184,7 @@ class WorkflowEntry:
         if dify_config.ENABLE_OTEL or is_instrument_flag_enabled():
             self.graph_engine.layer(ObservabilityLayer())
 
-    def run(self) -> Generator[GraphEngineEvent, None, None]:
+    def run(self) -> Generator[GraphEngineEvent]:
         graph_engine = self.graph_engine
 
         try:
@@ -198,7 +208,7 @@ class WorkflowEntry:
         user_inputs: Mapping[str, Any],
         variable_pool: VariablePool,
         variable_loader: VariableLoader = DUMMY_VARIABLE_LOADER,
-    ) -> tuple[Node, Generator[GraphNodeEventBase | ContainerAwaitRequest, None, None]]:
+    ) -> tuple[Node, Generator[GraphNodeEventBase | ContainerAwaitRequest]]:
         """
         Single step run workflow node
         :param workflow: Workflow instance
@@ -228,6 +238,7 @@ class WorkflowEntry:
             user_id=user_id,
             user_from=UserFrom.ACCOUNT,
             invoke_from=InvokeFrom.DEBUGGER,
+            app_type=CreditUsageAppType.WORKFLOW,
         )
         graph_init_context = DifyGraphInitContext(
             workflow_id=workflow.id,
@@ -352,7 +363,7 @@ class WorkflowEntry:
     @classmethod
     def run_free_node(
         cls, node_data: dict[str, Any], node_id: str, tenant_id: str, user_id: str, user_inputs: dict[str, Any]
-    ) -> tuple[Node, Generator[GraphNodeEventBase | ContainerAwaitRequest, None, None]]:
+    ) -> tuple[Node, Generator[GraphNodeEventBase | ContainerAwaitRequest]]:
         """
         Run free node
 
@@ -387,6 +398,7 @@ class WorkflowEntry:
             user_id=user_id,
             user_from=UserFrom.ACCOUNT,
             invoke_from=InvokeFrom.DEBUGGER,
+            app_type=CreditUsageAppType.WORKFLOW,
         )
         graph_init_context = DifyGraphInitContext(
             workflow_id="",
@@ -546,9 +558,7 @@ class WorkflowEntry:
                 variable_pool.add([variable_node_id] + variable_key_list, input_value)
 
     @staticmethod
-    def _run_node_with_layers(
-        node: Node, *, tenant_id: str
-    ) -> Generator[GraphNodeEventBase | ContainerAwaitRequest, None, None]:
+    def _run_node_with_layers(node: Node, *, tenant_id: str) -> Generator[GraphNodeEventBase | ContainerAwaitRequest]:
         """
         Run a standalone node with the same quota and observability hooks as GraphEngine.
         """

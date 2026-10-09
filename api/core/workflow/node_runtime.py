@@ -20,6 +20,7 @@ from core.db.session_factory import session_factory
 from core.helper.trace_id_helper import ParentTraceContext
 from core.llm_generator.output_parser.errors import OutputParserError
 from core.llm_generator.output_parser.structured_output import invoke_llm_with_structured_output
+from core.model_context import use_credit_usage_metadata
 from core.model_manager import ModelInstance, QuotaManagedModelInstance
 from core.plugin.impl.exc import PluginDaemonClientSideError, PluginInvokeError
 from core.plugin.impl.plugin import PluginInstaller
@@ -241,7 +242,7 @@ class DifyPreparedLLM(LLMProtocol):
         tools: Sequence[PromptMessageTool] | None,
         stop: Sequence[str] | None,
         stream: Literal[True],
-    ) -> Generator[LLMResultChunk, None, None]: ...
+    ) -> Generator[LLMResultChunk]: ...
 
     @override
     def invoke_llm(
@@ -252,7 +253,7 @@ class DifyPreparedLLM(LLMProtocol):
         tools: Sequence[PromptMessageTool] | None,
         stop: Sequence[str] | None,
         stream: bool,
-    ) -> LLMResult | Generator[LLMResultChunk, None, None]:
+    ) -> LLMResult | Generator[LLMResultChunk]:
         return self._model_instance.invoke_llm(
             prompt_messages=list(prompt_messages),
             model_parameters=dict(model_parameters),
@@ -282,7 +283,7 @@ class DifyPreparedLLM(LLMProtocol):
         model_parameters: Mapping[str, Any],
         stop: Sequence[str] | None,
         stream: Literal[True],
-    ) -> Generator[LLMResultChunkWithStructuredOutput, None, None]: ...
+    ) -> Generator[LLMResultChunkWithStructuredOutput]: ...
 
     @override
     def invoke_llm_with_structured_output(
@@ -293,7 +294,7 @@ class DifyPreparedLLM(LLMProtocol):
         model_parameters: Mapping[str, Any],
         stop: Sequence[str] | None,
         stream: bool,
-    ) -> LLMResultWithStructuredOutput | Generator[LLMResultChunkWithStructuredOutput, None, None]:
+    ) -> LLMResultWithStructuredOutput | Generator[LLMResultChunkWithStructuredOutput]:
         return invoke_llm_with_structured_output(
             provider=self.provider,
             model_schema=self.get_model_schema(),
@@ -303,6 +304,7 @@ class DifyPreparedLLM(LLMProtocol):
             model_parameters=model_parameters,
             stop=list(stop or []),
             stream=stream,
+            request_metadata=self._request_metadata,
         )
 
     @override
@@ -362,7 +364,7 @@ class DifyPreparedPollingLLM(DifyPreparedLLM, LLMPollingCapableProtocol):
         self.finalize_llm_polling()
 
         if isinstance(self._model_instance, QuotaManagedModelInstance):
-            self._polling_quota_reservation = self._model_instance.reserve_quota()
+            self._polling_quota_reservation = self._model_instance._reserve_quota_for_request(self._request_metadata)
 
         try:
             polling_result = self._polling_runtime.start_llm_polling(
@@ -610,7 +612,7 @@ class DifyToolNodeRuntime(ToolNodeRuntimeProtocol):
         tool_parameters: Mapping[str, Any],
         workflow_call_depth: int,
         provider_name: str,
-    ) -> Generator[ToolRuntimeMessage, None, None]:
+    ) -> Generator[ToolRuntimeMessage]:
         runtime_binding = self._binding_from_handle(tool_runtime)
         tool = runtime_binding.tool
         callback = DifyWorkflowCallbackHandler()
@@ -627,25 +629,29 @@ class DifyToolNodeRuntime(ToolNodeRuntimeProtocol):
             tool.clear_trace_session_id()
 
         try:
-            session_maker = self._session_maker or session_factory.get_session_maker()
-            with session_maker.begin() as session:
-                messages = ToolEngine.generic_invoke(
-                    session=session,
-                    tool=tool,
-                    tool_parameters=dict(tool_parameters),
-                    user_id=self._run_context.user_id,
-                    workflow_tool_callback=callback,
-                    workflow_call_depth=workflow_call_depth,
-                    app_id=self._run_context.app_id,
-                    conversation_id=runtime_binding.conversation_id,
-                )
-                transformed_messages = ToolFileMessageTransformer.transform_tool_invoke_messages(
-                    messages=messages,
-                    user_id=self._run_context.user_id,
-                    tenant_id=self._run_context.tenant_id,
-                    conversation_id=runtime_binding.conversation_id,
-                )
-                yield from self._adapt_messages(transformed_messages, provider_name=provider_name)
+            request_metadata = (
+                {"app_type": self._run_context.app_type} if self._run_context.app_type is not None else None
+            )
+            with use_credit_usage_metadata(request_metadata):
+                session_maker = self._session_maker or session_factory.get_session_maker()
+                with session_maker.begin() as session:
+                    messages = ToolEngine.generic_invoke(
+                        session=session,
+                        tool=tool,
+                        tool_parameters=dict(tool_parameters),
+                        user_id=self._run_context.user_id,
+                        workflow_tool_callback=callback,
+                        workflow_call_depth=workflow_call_depth,
+                        app_id=self._run_context.app_id,
+                        conversation_id=runtime_binding.conversation_id,
+                    )
+                    transformed_messages = ToolFileMessageTransformer.transform_tool_invoke_messages(
+                        messages=messages,
+                        user_id=self._run_context.user_id,
+                        tenant_id=self._run_context.tenant_id,
+                        conversation_id=runtime_binding.conversation_id,
+                    )
+                    yield from self._adapt_messages(transformed_messages, provider_name=provider_name)
         except Exception as exc:
             raise self._map_invocation_exception(exc, provider_name=provider_name) from exc
 
@@ -725,10 +731,10 @@ class DifyToolNodeRuntime(ToolNodeRuntimeProtocol):
 
     def _adapt_messages(
         self,
-        messages: Generator[CoreToolInvokeMessage, None, None],
+        messages: Generator[CoreToolInvokeMessage],
         *,
         provider_name: str,
-    ) -> Generator[ToolRuntimeMessage, None, None]:
+    ) -> Generator[ToolRuntimeMessage]:
         try:
             for message in messages:
                 yield self._convert_message(message)

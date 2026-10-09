@@ -17,7 +17,7 @@ import { studioAppListCategories } from './query-params'
 type AppListCategory = AppListUrlQuery['category']
 
 const chipClassName =
-  'flex h-8 items-center whitespace-nowrap rounded-lg border-[0.5px] px-2 text-[13px] leading-4 outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-state-accent-solid'
+  'flex h-8 items-center whitespace-nowrap rounded-lg border-[0.5px] px-2 text-[13px] leading-4 transition-colors'
 
 type AppTypeFilterProps = {
   value: AppListCategory
@@ -25,7 +25,7 @@ type AppTypeFilterProps = {
 }
 
 export function AppTypeFilter({ value, onChange }: AppTypeFilterProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['app'])
 
   const options = useMemo(() => {
     const optionsByCategory = {
@@ -85,7 +85,7 @@ export function AppTypeFilter({ value, onChange }: AppTypeFilterProps) {
         <span className="px-1 text-text-tertiary">{triggerLabel}</span>
         <span aria-hidden className="i-ri-arrow-down-s-line h-4 w-4 shrink-0 text-text-tertiary" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent placement="bottom-start" popupClassName="w-[220px]">
+      <DropdownMenuContent placement="bottom-start" className="w-55">
         <DropdownMenuRadioGroup<AppListCategory>
           value={value}
           onValueChange={(nextValue) => onChange(nextValue)}

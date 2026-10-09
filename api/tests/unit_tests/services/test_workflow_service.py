@@ -11,12 +11,14 @@ This test suite covers:
 
 import json
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import ANY, MagicMock, patch, sentinel
 
 import pytest
+from pytest_mock import MockerFixture
 from sqlalchemy import event, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Engine
@@ -215,6 +217,10 @@ class TestWorkflowAssociatedDataFactory:
 
 @pytest.mark.usefixtures("sqlite_session")
 class TestWorkflowService:
+    @pytest.fixture(autouse=True)
+    def _community_edition(self, config_overrides: Callable[..., None]) -> None:
+        config_overrides(DEPLOYMENT_EDITION=DeploymentEdition.COMMUNITY)
+
     """
     Comprehensive unit tests for WorkflowService methods.
 
@@ -358,11 +364,15 @@ class TestWorkflowService:
 
         assert result is workflow
 
-    def test_get_published_workflow_by_id_can_lock_restore_source(self, workflow_service: WorkflowService):
+    def test_get_published_workflow_by_id_can_lock_restore_source(
+        self, workflow_service: WorkflowService, sqlite_session: Session, mocker: MockerFixture
+    ):
         app = TestWorkflowAssociatedDataFactory.create_app()
         workflow = TestWorkflowAssociatedDataFactory.create_workflow(version="v1")
-        session = MagicMock(spec=Session)
-        session.scalar.return_value = workflow
+        session = sqlite_session
+        session.add(workflow)
+        session.commit()
+        lookup = mocker.spy(session, "scalar")
 
         result = workflow_service.get_published_workflow_by_id(
             app,
@@ -371,7 +381,7 @@ class TestWorkflowService:
             for_update=True,
         )
 
-        stmt = session.scalar.call_args.args[0]
+        stmt = lookup.call_args.args[0]
         sql = str(stmt.compile(dialect=postgresql.dialect()))
         assert result is workflow
         assert "FOR UPDATE" in sql
@@ -1272,7 +1282,9 @@ class TestWorkflowService:
 
         with (
             patch("services.workflow_service.app_published_workflow_was_updated"),
-            patch("services.workflow_service.dify_config.DEPLOYMENT_EDITION", DeploymentEdition.COMMUNITY),
+            patch(
+                "services.workflow_service.register_new_agent_beta_workflow_publish_after_commit"
+            ) as register_workflow_publish,
         ):
             result = workflow_service.publish_workflow(
                 session=sqlite_session,
@@ -1287,6 +1299,41 @@ class TestWorkflowService:
         assert result.version != Workflow.VERSION_DRAFT
         assert result.marked_name == "Version 1"
         assert result.marked_comment == "Initial release"
+        register_workflow_publish.assert_not_called()
+
+    def test_publish_workflow_registers_inline_agent_after_commit(
+        self, workflow_service: WorkflowService, sqlite_session: Session
+    ) -> None:
+        app = TestWorkflowAssociatedDataFactory.create_app()
+        account = TestWorkflowAssociatedDataFactory.create_account()
+        draft = TestWorkflowAssociatedDataFactory.create_workflow(
+            version=Workflow.VERSION_DRAFT,
+            graph=TestWorkflowAssociatedDataFactory.create_valid_workflow_graph(),
+        )
+        sqlite_session.add(draft)
+        sqlite_session.commit()
+
+        with (
+            patch("services.workflow_service.app_published_workflow_was_updated"),
+            patch(
+                "services.agent.workflow_publish_service.WorkflowAgentPublishService.copy_agent_node_bindings_to_published",
+                return_value=True,
+            ),
+            patch(
+                "services.workflow_service.register_new_agent_beta_workflow_publish_after_commit"
+            ) as register_workflow_publish,
+        ):
+            published = workflow_service.publish_workflow(
+                session=sqlite_session,
+                app_model=app,
+                account=account,
+            )
+
+        register_workflow_publish.assert_called_once_with(
+            session=sqlite_session,
+            published_workflow_id=published.id,
+            published_at=published.created_at,
+        )
 
     def test_publish_workflow_numbers_versions_from_one(
         self, workflow_service: WorkflowService, sqlite_session: Session
@@ -1307,10 +1354,6 @@ class TestWorkflowService:
 
         with (
             patch("services.workflow_service.app_published_workflow_was_updated"),
-            patch(
-                "services.workflow_service.dify_config.DEPLOYMENT_EDITION",
-                DeploymentEdition.COMMUNITY,
-            ),
         ):
             first = workflow_service.publish_workflow(session=sqlite_session, app_model=app, account=account)
             second = workflow_service.publish_workflow(session=sqlite_session, app_model=app, account=account)
@@ -1337,10 +1380,6 @@ class TestWorkflowService:
 
         with (
             patch("services.workflow_service.app_published_workflow_was_updated"),
-            patch(
-                "services.workflow_service.dify_config.DEPLOYMENT_EDITION",
-                DeploymentEdition.COMMUNITY,
-            ),
         ):
             published = workflow_service.publish_workflow(session=sqlite_session, app_model=app, account=account)
             sqlite_session.flush()
@@ -1376,10 +1415,6 @@ class TestWorkflowService:
 
             with (
                 patch("services.workflow_service.app_published_workflow_was_updated"),
-                patch(
-                    "services.workflow_service.dify_config.DEPLOYMENT_EDITION",
-                    DeploymentEdition.COMMUNITY,
-                ),
             ):
                 workflow = workflow_service.publish_workflow(session=sqlite_session, app_model=app, account=account)
             published.append(workflow)
@@ -1439,14 +1474,20 @@ class TestWorkflowService:
 
         with (
             patch(
-                "services.feature_service.FeatureService.get_system_features",
-                return_value=SimpleNamespace(plugin_manager=SimpleNamespace(enabled=False)),
+                "services.system_feature_service.SystemFeatureService.is_plugin_manager_enabled",
+                return_value=False,
             ),
             pytest.raises(ValueError, match=error),
         ):
             workflow_service.publish_workflow(session=sqlite_session, app_model=app, account=account)
 
-    def test_publish_workflow_trigger_limit_exceeded(self, workflow_service: WorkflowService, sqlite_session: Session):
+    def test_publish_workflow_trigger_limit_exceeded(
+        self,
+        workflow_service: WorkflowService,
+        sqlite_session: Session,
+        config_overrides: Callable[..., None],
+    ):
+        config_overrides(DEPLOYMENT_EDITION=DeploymentEdition.CLOUD)
         """
         Test publish_workflow raises error when trigger node limit exceeded in SANDBOX plan.
 
@@ -1472,7 +1513,6 @@ class TestWorkflowService:
         sqlite_session.commit()
 
         with (
-            patch("services.workflow_service.dify_config.DEPLOYMENT_EDITION", DeploymentEdition.CLOUD),
             patch("services.workflow_service.BillingService") as MockBillingService,
         ):
             MockBillingService.get_info.return_value = {"subscription": {"plan": "sandbox"}}
@@ -1724,24 +1764,30 @@ class TestWorkflowService:
         for binding in non_target_bindings:
             assert sqlite_session.get(WorkflowAgentNodeBinding, binding.id) is binding
 
-    def test_delete_workflow_locks_source_until_caller_commits(self, workflow_service: WorkflowService):
+    def test_delete_workflow_locks_source_until_caller_commits(
+        self, workflow_service: WorkflowService, sqlite_session: Session, mocker: MockerFixture
+    ):
         workflow = TestWorkflowAssociatedDataFactory.create_workflow(version="v1")
         workflow_ref = WorkflowRef(
             tenant_id=workflow.tenant_id,
             owner_id=workflow.app_id,
             workflow_id=workflow.id,
         )
-        session = MagicMock(spec=Session)
-        session.scalar.side_effect = [workflow, None, None]
-        session.scalars.return_value.all.return_value = []
+        session = sqlite_session
+        session.add(workflow)
+        session.commit()
+        lookup = mocker.spy(session, "scalar")
 
         result = workflow_service.delete_workflow(session=session, workflow_ref=workflow_ref)
 
-        stmt = session.scalar.call_args_list[0].args[0]
+        stmt = lookup.call_args_list[0].args[0]
         sql = str(stmt.compile(dialect=postgresql.dialect()))
         assert result == []
         assert "FOR UPDATE" in sql
-        session.delete.assert_called_once_with(workflow)
+        assert session.in_transaction()
+        assert workflow in session.deleted
+        session.commit()
+        assert session.get(Workflow, workflow.id) is None
 
     def test_delete_workflow_with_ref_scopes_lookup_to_app(
         self, workflow_service: WorkflowService, sqlite_session: Session

@@ -7,6 +7,7 @@ import pytest
 import redis
 from pytest_mock import MockerFixture
 
+from core.app.entities.app_invoke_entities import CreditUsageCreatedBy
 from core.entities.provider_entities import (
     ModelLoadBalancingConfiguration,
     ProviderQuotaType,
@@ -173,7 +174,7 @@ def test_quota_managed_non_streaming_invocation_finalizes_reservation() -> None:
     )
     model_instance = manager.get_model_instance("tenant-1", "openai", ModelType.LLM, "gpt-4")
     usage = LLMUsage.empty_usage().model_copy(update={"total_tokens": 12})
-    result = MagicMock(spec=LLMResult, usage=usage)
+    result = LLMResult(model="gpt-4", prompt_messages=[], message=AssistantPromptMessage(content="answer"), usage=usage)
     reservation = MagicMock(commit_before_delivery=True)
 
     invocation_id = str(uuid4())
@@ -184,11 +185,14 @@ def test_quota_managed_non_streaming_invocation_finalizes_reservation() -> None:
         response = model_instance.invoke_llm(
             prompt_messages=[],
             stream=False,
-            request_metadata={"invocation_id": invocation_id},
+            request_metadata={"invocation_id": invocation_id, "created_by": CreditUsageCreatedBy.APP.value},
         )
 
     assert response is result
-    reserve_quota.assert_called_once_with(request_id=invocation_id)
+    reserve_quota.assert_called_once_with(
+        request_id=invocation_id,
+        created_by=CreditUsageCreatedBy.APP.value,
+    )
     invoke.assert_called_once()
     reservation.commit.assert_called_once_with(usage)
     reservation.release.assert_called_once_with()
