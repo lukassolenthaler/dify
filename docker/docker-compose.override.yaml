@@ -1,12 +1,13 @@
 services:
   nginx:
-    # Fester Name, damit NPM ein stabiles Ziel hat
+    # Fester Name als Ziel für den Reverse Proxy (Stack «proxy» auf dem Pi)
     container_name: dify-nginx
     networks:
       default:
       proxy:
-    # Keine Ports mehr nach aussen - NPM erreicht den Container ueber das
-    # proxy-Netz. Braucht Docker Compose v2.24+ (fordert Dify ohnehin).
+    # Keine Ports nach aussen, Zugriff nur über das Netzwerk «proxy»
+    ports: !override []
+  plugin_daemon:
     ports: !override []
 
 networks:
